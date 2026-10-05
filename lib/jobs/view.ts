@@ -176,7 +176,7 @@ export function emptyCopy(feed: FeedId, filtered: boolean): { title: string; bod
     case "stretch":
       return {
         title: "No stretch roles",
-        body: "Stretch is for roles that are close but ask for more than 0–1 years, usually as a preference or a 1–2 year bar.",
+        body: "Stretch is for roles a recent graduate could still consider: a 1–2 year preference, about 2 years preferred, or an early-career level that is still ambiguous.",
       }
     case "saved":
       return {

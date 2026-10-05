@@ -107,6 +107,7 @@ export async function processPostings(
       description: raw.description,
       locationRaw: raw.locationRaw,
       arrangementRaw: raw.arrangementRaw,
+      employmentType: raw.employmentType,
     })
     return { raw, city: preview.city }
   })
@@ -149,6 +150,7 @@ export async function processPostings(
       description: raw.description,
       locationRaw: raw.locationRaw,
       arrangementRaw: raw.arrangementRaw,
+      employmentType: raw.employmentType,
     })
     const companyBits = members.map((item) => blankFrom(item.raw))
     const merged = companyBits.reduce((acc, bits) => ({
@@ -172,10 +174,12 @@ export async function processPostings(
         city: evaluation.city,
         workArrangement: evaluation.workArrangement,
         experienceLabel: evaluation.experience.label,
-        experienceBucket: evaluation.experience.bucket,
+        experienceBucket: evaluation.feedBucket === "stretch" ? "stretch" : "main",
         requiredOrPreferred: evaluation.experience.requiredOrPreferred,
         industry: merged.industry,
         roleFamily: evaluation.roleFamily,
+        roleTier: evaluation.tier,
+        levelSignal: evaluation.levelSignal,
       }
       classification = classify ? await classify(input) : classifyDeterministic(input)
     }

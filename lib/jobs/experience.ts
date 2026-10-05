@@ -1,4 +1,6 @@
-export type ExperienceBucket = "main" | "stretch" | "reject"
+import { plainText } from "@/lib/jobs/text"
+
+export type ExperienceBucket = "main" | "stretch" | "reject" | "unknown"
 export type ExperienceMode = "required" | "preferred" | "none" | "mixed"
 
 export interface ExperienceParse {
@@ -54,7 +56,7 @@ const PHRASES: { phrase: Phrase; re: RegExp }[] = [
   },
   { phrase: "entry_level", re: /entry[- ]level/i },
   { phrase: "early_career", re: /early career/i },
-  { phrase: "junior", re: /\bjunior\b/i },
+  { phrase: "junior", re: /\bjunior\b(?!\s+(?:members?|engineers?|designers?|developers?|staff|employees?|people|teams?|colleagues?))/i },
   { phrase: "senior_exp", re: /senior experience/i },
   { phrase: "lead_exp", re: /lead[- ]level experience/i },
   { phrase: "staff_exp", re: /staff[- ]level experience/i },
@@ -217,6 +219,16 @@ function collectPhraseHits(description: string): Hit[] {
   return hits
 }
 
+function isCandidateExperience(text: string, index: number): boolean {
+  const local = text.slice(Math.max(0, index - 24), index + 48).toLowerCase()
+  if (/\b(sabbatical|vesting|401\(k\)|parental leave|paid time off|\bpto\b|years of service)\b/.test(local)) return false
+  if (/\b(profitable for|been around|in \d+ years,? we)\b/.test(local)) return false
+  if (/\b(?:after|over|more than)\s+\d+\s+years\b/.test(local) && !/\b(experience|preferred|required|qualification|background)\b/.test(local)) {
+    return false
+  }
+  return true
+}
+
 function isHardReject(hit: Hit): boolean {
   if (hit.kind === "phrase") {
     return LEVEL_PHRASES.has(hit.phrase!) && hit.qualifier !== "preferred"
@@ -362,12 +374,14 @@ export function parseExperience(input: {
   title?: string | null
   description?: string | null
 }): ExperienceParse {
-  // Title seniority is never a requirement. Only the posting body is read.
-  void input.title
-  const description = input.description ?? ""
-  const hits = [...collectYearHits(description), ...collectPhraseHits(description)]
+  // Year requirements are read from the title and the body. A blank requirement is
+  // unknown, not entry-level. Title seniority is decided separately.
+  const description = plainText(`${input.title ?? ""}\n${input.description ?? ""}`)
+  const hits = [...collectYearHits(description), ...collectPhraseHits(description)].filter((hit) =>
+    hit.kind === "phrase" ? true : isCandidateExperience(description, hit.index),
+  )
 
-  let bucket: ExperienceBucket = "main"
+  let bucket: ExperienceBucket = hits.length === 0 ? "unknown" : "main"
   if (hits.some(isHardReject)) bucket = "reject"
   else if (hits.some(isStretch) && !hits.some(isExplicitEntry)) bucket = "stretch"
 
