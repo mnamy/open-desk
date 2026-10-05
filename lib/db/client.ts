@@ -9,7 +9,12 @@ const globalForDb = globalThis as unknown as { deskDb?: Promise<Sql> }
 export { databaseUrl, migrationUrl }
 
 export function getDb(): Promise<Sql> {
-  if (!globalForDb.deskDb) globalForDb.deskDb = openDb()
+  if (!globalForDb.deskDb) {
+    globalForDb.deskDb = openDb().catch((error: unknown) => {
+      globalForDb.deskDb = undefined
+      throw error
+    })
+  }
   return globalForDb.deskDb
 }
 
@@ -33,6 +38,9 @@ async function openHosted(runtime: string): Promise<Sql> {
 }
 
 async function openPglite(): Promise<Sql> {
+  if (process.env.VERCEL) {
+    throw new Error("This deployment has no Neon connection string. Connect the Neon integration in Vercel so DATABASE_URL is set, then redeploy.")
+  }
   const { PGlite } = await import("@electric-sql/pglite")
   const dir = path.join(process.cwd(), ".data", "pglite")
   fs.mkdirSync(dir, { recursive: true })

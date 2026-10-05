@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest"
-import { databaseUrl, forDriver, migrationUrl } from "@/lib/db/postgres-url.mjs"
+import { databaseUrl, forDriver, migrationUrl, sanitizeDbError } from "@/lib/db/postgres-url.mjs"
 
 const NAMES = ["DATABASE_URL", "DATABASE_URL_UNPOOLED", "POSTGRES_URL", "POSTGRES_URL_NON_POOLING"] as const
 
@@ -38,5 +38,20 @@ describe("Neon connection selection", () => {
     expect(forDriver("postgres://db.example/desk?sslmode=require&channel_binding=require")).toBe(
       "postgres://db.example/desk?sslmode=require",
     )
+  })
+
+  it("names a missing Neon variable on Vercel without repeating a connection string", () => {
+    process.env.VERCEL = "1"
+    const message = sanitizeDbError(new Error("connect ECONNREFUSED postgres://user:secret@ep.neon.tech/db"))
+    expect(message).toContain("DATABASE_URL")
+    expect(message).not.toContain("secret")
+    delete process.env.VERCEL
+  })
+
+  it("redacts a connection string from a driver error", () => {
+    process.env.DATABASE_URL = "postgres://pooled.example/db"
+    const message = sanitizeDbError(new Error("unrecognized configuration parameter postgres://user:secret@ep.neon.tech/db"))
+    expect(message).not.toContain("secret")
+    expect(message).toContain("unrecognized configuration parameter")
   })
 })

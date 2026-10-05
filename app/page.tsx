@@ -1,9 +1,12 @@
+import Link from "next/link"
 import { EmptyState } from "@/components/empty-state"
 import { FeedNav } from "@/components/feed-nav"
 import { Filters } from "@/components/filters"
 import { JobCard } from "@/components/job-card"
 import { RunSearchButton } from "@/components/run-search"
+import { buttonVariants } from "@/components/ui/button"
 import { getDb } from "@/lib/db/client"
+import { sanitizeDbError } from "@/lib/db/postgres-url.mjs"
 import { latestSearchRun, listDeskJobs, type DeskJob } from "@/lib/db/repository"
 import { FEEDS, jobInFeed, type FeedId } from "@/lib/jobs/feeds"
 import { emptyCopy, filterOptions, hasActiveFilters, parseFeed, runSummary, toCard, visibleJobs, type DeskFilters } from "@/lib/jobs/view"
@@ -48,7 +51,24 @@ export default async function Home({
     if (value) query.set(key, value)
   }
 
-  const db = await getDb()
+  let db
+  try {
+    db = await getDb()
+  } catch (error) {
+    const message = sanitizeDbError(error)
+    console.error(message)
+    return (
+      <main className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-center gap-4 px-4 py-16">
+        <h1 className="font-heading text-4xl">Open Desk could not load.</h1>
+        <p className="max-w-md text-sm leading-6 text-muted-foreground">{message}</p>
+        <div>
+          <Link className={buttonVariants()} href="/">
+            Try again
+          </Link>
+        </div>
+      </main>
+    )
+  }
   const [jobs, run] = await Promise.all([listDeskJobs(db), latestSearchRun(db)])
   const now = new Date()
   const counts = countFeeds(jobs)
