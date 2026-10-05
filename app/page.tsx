@@ -10,6 +10,7 @@ import { emptyCopy, filterOptions, hasActiveFilters, parseFeed, runSummary, toCa
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
+export const maxDuration = 300
 
 function one(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value
@@ -72,6 +73,12 @@ export default async function Home({
       </header>
 
       <p className="text-sm leading-6 text-muted-foreground">{runSummary(run)}</p>
+      {run && run.warnings.length > 0 ? (
+        <p className="text-sm leading-6 text-amber-950">
+          {run.warnings.slice(0, 4).join(" · ")}
+          {run.warnings.length > 4 ? ` · ${run.warnings.length - 4} more source warnings.` : ""}
+        </p>
+      ) : null}
 
       <FeedNav feed={feed} counts={counts} query={query.toString()} />
 

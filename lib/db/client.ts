@@ -25,6 +25,9 @@ async function openDb(): Promise<PGlite> {
 }
 
 export async function applyMigration(db: PGlite): Promise<void> {
-  const sql = fs.readFileSync(path.join(process.cwd(), "db/migrations/0001_init.sql"), "utf8")
-  await db.exec(sql)
+  const dir = path.join(process.cwd(), "db/migrations")
+  const files = fs.readdirSync(dir).filter((file) => file.endsWith(".sql")).sort()
+  for (const file of files) {
+    await db.exec(fs.readFileSync(path.join(dir, file), "utf8"))
+  }
 }

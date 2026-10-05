@@ -1,6 +1,6 @@
 import type { SourceAdapter } from "@/lib/sources/types"
 
-/** Names only. Milestone 1 runs the sample import and does not fetch these. */
+/** LinkedIn stays planned. Milestone 2 fetches the other sources on Run search. */
 export const PLANNED_SOURCES: SourceAdapter[] = [
   { id: "sample-import", phase: 1, label: "Local sample import" },
   { id: "greenhouse", phase: 2, label: "Greenhouse" },

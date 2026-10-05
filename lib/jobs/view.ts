@@ -35,6 +35,8 @@ export interface CardModel {
   postedLine: string
   discoveredLine: string | null
   sources: string
+  sourceBadges: string[]
+  sample: boolean
   fit: number | null
   risk: string | null
   whyMatch: string
@@ -113,6 +115,8 @@ export function toCard(job: DeskJob, now = new Date()): CardModel {
     postedLine: fresh.postedLabel ?? fresh.discoveredLabel,
     discoveredLine: fresh.postedLabel ? fresh.discoveredLabel : null,
     sources: uniqueLabels.join(" · "),
+    sourceBadges: uniqueLabels,
+    sample: job.sample,
     fit: job.opportunityFit,
     risk: job.qualificationRisk,
     whyMatch: job.whyMatch ?? "The posting did not include enough detail to explain the match.",
@@ -127,10 +131,20 @@ export function toCard(job: DeskJob, now = new Date()): CardModel {
 
 export function runSummary(run: SearchRun | null): string {
   if (!run || !run.finishedAt) {
-    return "Loaded from the local sample. Run search to bring in roles that were not on the first pass."
+    return "Loaded from the local sample. Run search to check Greenhouse, Ashby, Lever, YC, and company career pages."
   }
   const noun = run.jobsNew === 1 ? "role" : "roles"
-  return `Last search ${formatDeskTime(run.finishedAt)}. ${run.jobsNew} new ${noun}. ${run.jobsMain} on the main feed, ${run.jobsStretch} stretch, ${run.jobsExcluded} excluded.`
+  if (run.runKind !== "live") {
+    return `Last search ${formatDeskTime(run.finishedAt)}. ${run.jobsNew} new ${noun}. ${run.jobsMain} on the main feed, ${run.jobsStretch} stretch, ${run.jobsExcluded} excluded.`
+  }
+  return [
+    `Last search ${formatDeskTime(run.finishedAt)}.`,
+    `Checked ${run.companiesChecked} companies and fetched ${run.postingsFetched} postings.`,
+    `${run.duplicatesRemoved} duplicates removed.`,
+    `Excluded ${run.excludedLocation} for location, ${run.excludedArrangement} for work arrangement, and ${run.excludedExperience} for experience.`,
+    `${run.jobsMain} on the main feed, ${run.jobsStretch} stretch.`,
+    `${run.jobsNew} new ${noun}.`,
+  ].join(" ")
 }
 
 export function emptyCopy(feed: FeedId, filtered: boolean): { title: string; body: string } {
@@ -149,7 +163,7 @@ export function emptyCopy(feed: FeedId, filtered: boolean): { title: string; bod
     case "new":
       return {
         title: "No new roles",
-        body: "Nothing on the main feed was first seen in the latest search. Run search to check the imported set for roles that were held back.",
+        body: "Nothing on the main feed was first seen in the latest search. Run search to check live sources for roles that were not here before.",
       }
     case "all":
       return {

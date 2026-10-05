@@ -2,11 +2,11 @@
 
 import { revalidatePath } from "next/cache"
 import { getDb } from "@/lib/db/client"
-import { importPostings, setFeedback, type FeedbackAction } from "@/lib/db/repository"
+import { importLiveSearch, setFeedback, type FeedbackAction } from "@/lib/db/repository"
 
 export async function runSearchAction(): Promise<void> {
   const db = await getDb()
-  await importPostings(db, "search")
+  await importLiveSearch(db)
   revalidatePath("/")
 }
 

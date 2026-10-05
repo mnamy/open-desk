@@ -22,7 +22,7 @@ export interface CareerPagePlan {
   pathsToTry: string[]
 }
 
-const CAREER_PATHS = ["/careers", "/jobs", "/openings", "/open-roles", "/join-us", "/work-with-us"]
+export const CAREER_PATHS = ["/careers", "/jobs", "/openings", "/open-roles", "/join-us", "/work-with-us"]
 
 export function planCareerCheck(candidate: CompanyCandidate & { website?: string }): CareerPagePlan {
   const website = candidate.website?.replace(/\/$/, "")
