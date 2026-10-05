@@ -1,14 +1,15 @@
 import fs from "node:fs"
 import path from "node:path"
 import postgres from "postgres"
+import { forDriver, migrationUrl } from "../lib/db/postgres-url.mjs"
 
-const url = process.env.DIRECT_URL?.trim() || process.env.DATABASE_URL?.trim()
+const url = migrationUrl()
 if (!url) {
-  console.error("Set DATABASE_URL or DIRECT_URL. No connection string was found.")
+  console.error("No Neon connection string was found. Expected DATABASE_URL_UNPOOLED or DATABASE_URL from the Vercel Neon integration.")
   process.exit(1)
 }
 
-const sql = postgres(url, {
+const sql = postgres(forDriver(url), {
   prepare: false,
   max: 1,
   ssl: "require",
