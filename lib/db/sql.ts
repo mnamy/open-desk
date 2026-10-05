@@ -1,5 +1,6 @@
 import type { PGlite } from "@electric-sql/pglite"
 import postgres from "postgres"
+import { forDriver } from "@/lib/db/postgres-url.mjs"
 
 export interface Sql {
   query<T>(text: string, params?: unknown[]): Promise<{ rows: T[] }>
@@ -44,7 +45,7 @@ type PostgresClient = ReturnType<typeof postgres>
 type PostgresTx = postgres.TransactionSql
 
 export function openPostgres(url: string): { db: Sql; close: () => Promise<void> } {
-  const client = postgres(url, {
+  const client = postgres(forDriver(url), {
     prepare: false,
     max: 1,
     ssl: "require",

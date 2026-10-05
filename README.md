@@ -8,7 +8,7 @@ Each role has two scores. Opportunity fit (0–100) is how much the work resembl
 
 ## Run locally
 
-Requires Node.js 22 or newer. Leave `DATABASE_URL` unset to use embedded PGlite. No API keys.
+Requires Node.js 22 or newer. Leave the Neon variables unset to use embedded PGlite. No API keys.
 
 ```bash
 npm install
@@ -23,13 +23,13 @@ A full live search can take a few minutes. One board timing out does not cancel 
 
 ## Production
 
-Set `DATABASE_URL` to hosted Postgres and the app uses that instead of PGlite. Copy `.env.example` to `.env.local` for local hosted tests. Do not commit either file with values.
+Production uses Neon Postgres provisioned by the Vercel integration. The app reads `DATABASE_URL` for requests and `DATABASE_URL_UNPOOLED` for migrations. Legacy `POSTGRES_URL` and `POSTGRES_URL_NON_POOLING` are used only when those are absent. With none of them set, the app uses PGlite.
+
+Do not commit connection strings. Vercel injects them into the deployment. Migrations also run on startup, so a separate migrate step is optional:
 
 ```bash
 npm run db:migrate
 ```
-
-Migrations also run on startup. `DIRECT_URL` is optional and is only used for that migration connection.
 
 Run search calls `/api/search` once per pass so a single request stays within a one-minute serverless limit. Each pass saves its jobs before the next pass starts.
 
@@ -43,7 +43,7 @@ That runs the location, experience (required vs preferred, main vs stretch vs re
 
 ## Database
 
-Schema lives in `db/migrations`. It is ordinary Postgres (`TEXT`, `INTEGER`, `BOOLEAN`, `TIMESTAMPTZ`). Local development uses PGlite. Production uses the `DATABASE_URL` Postgres connection, intended for Supabase.
+Schema lives in `db/migrations`. It is ordinary Postgres (`TEXT`, `INTEGER`, `BOOLEAN`, `TIMESTAMPTZ`). Local development uses PGlite. Production uses the Neon connection from Vercel.
 
 ## Not in this milestone
 

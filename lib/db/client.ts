@@ -1,14 +1,12 @@
 import fs from "node:fs"
 import path from "node:path"
 import { importPostings } from "@/lib/db/repository"
+import { databaseUrl, migrationUrl } from "@/lib/db/postgres-url.mjs"
 import { asSql, openPostgres, wrapPglite, type Sql } from "@/lib/db/sql"
 
 const globalForDb = globalThis as unknown as { deskDb?: Promise<Sql> }
 
-export function databaseUrl(): string | undefined {
-  const value = process.env.DATABASE_URL?.trim()
-  return value || undefined
-}
+export { databaseUrl, migrationUrl }
 
 export function getDb(): Promise<Sql> {
   if (!globalForDb.deskDb) globalForDb.deskDb = openDb()
@@ -22,7 +20,7 @@ async function openDb(): Promise<Sql> {
 }
 
 async function openHosted(runtime: string): Promise<Sql> {
-  const migrateUrl = process.env.DIRECT_URL?.trim() || runtime
+  const migrateUrl = migrationUrl() || runtime
   const migrator = openPostgres(migrateUrl)
   try {
     await applyMigration(migrator.db)
