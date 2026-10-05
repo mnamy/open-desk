@@ -26,24 +26,23 @@ describe("experience required vs preferred", () => {
     ["Internship experience is welcome.", "main", "Internship experience accepted"],
     ["Professional experience preferred but not required.", "main", "Experience preferred, not required"],
     ["Some experience preferred.", "main", "Some experience preferred"],
-    ["", "main", "No stated experience requirement"],
+    ["", "unknown", "No stated experience requirement"],
   ])("main feed: %s", (description, bucket, label) => {
     const result = parsed(description)
     expect(result.bucket).toBe(bucket)
     expect(result.label).toBe(label)
   })
 
-  it("does not reject a senior title when the body is entry level", () => {
+  it("still reads an explicit entry bar when the title is senior", () => {
     const result = parsed("New graduate role. 0–1 years of experience.", "Senior Product Manager")
     expect(result.bucket).toBe("main")
     expect(result.label).toBe("0–1 years")
   })
 
-  it("ignores years that appear only in the title", () => {
-    const result = parsed("Build the roadmap with the team.", "Senior Product Manager, 5+ years required")
-    expect(result.bucket).toBe("main")
-    expect(result.label).toBe("No stated experience requirement")
-    expect(result.requiredOrPreferred).toBe("none")
+  it("reads a year requirement that appears only in the title", () => {
+    const result = parsed("Build the roadmap with the team.", "Product Manager, 5+ years required")
+    expect(result.bucket).toBe("reject")
+    expect(result.label).toBe("5+ years required")
   })
 
   it("keeps an explicit 0–1 requirement in the main feed when more years are only preferred", () => {

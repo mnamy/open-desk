@@ -11,6 +11,8 @@ export interface ClassificationInput {
   requiredOrPreferred: string
   industry: string | null
   roleFamily: string
+  roleTier: 0 | 1 | 2 | 3
+  levelSignal: "entry" | "modest" | "high"
 }
 
 export interface Classification {
