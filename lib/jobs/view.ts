@@ -130,8 +130,11 @@ export function toCard(job: DeskJob, now = new Date()): CardModel {
 }
 
 export function runSummary(run: SearchRun | null): string {
+  if (run?.status === "running") {
+    return `Search in progress. Checked ${run.companiesChecked} companies and fetched ${run.postingsFetched} postings so far.`
+  }
   if (!run || !run.finishedAt) {
-    return "Loaded from the local sample. Run search to check Greenhouse, Ashby, Lever, YC, and company career pages."
+    return "Loaded from the sample set. Run search to check Greenhouse, Ashby, Lever, YC, and company career pages."
   }
   const noun = run.jobsNew === 1 ? "role" : "roles"
   if (run.runKind !== "live") {

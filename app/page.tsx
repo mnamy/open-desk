@@ -10,7 +10,7 @@ import { emptyCopy, filterOptions, hasActiveFilters, parseFeed, runSummary, toCa
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
-export const maxDuration = 300
+export const maxDuration = 60
 
 function one(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value
