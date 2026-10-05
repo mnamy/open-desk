@@ -18,10 +18,10 @@ export function RunSearchButton() {
           })
         }}
       >
-        {pending ? "Checking the imported set…" : "Run search"}
+        {pending ? "Checking live sources…" : "Run search"}
       </Button>
       <p className="max-w-xs text-xs text-muted-foreground sm:text-right">
-        Re-reads the imported set and flags roles that were not here before. Nothing is crawled.
+        Checks Greenhouse, Ashby, Lever, YC, and saved career pages. One source failing does not stop the rest.
       </p>
     </div>
   )

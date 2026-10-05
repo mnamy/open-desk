@@ -46,9 +46,10 @@ export function applicationPreference(source: string, url: string): number {
   const src = source.toLowerCase()
   if (src === "linkedin" || value.includes("linkedin.com")) return 30
   if (ATS_HOSTS.some((host) => value.includes(host))) return 10
-  if (src === "career_page" || /\/(careers|jobs|openings|open-roles)\b/.test(value)) return 10
-  if (src === "yc" || value.includes("workatastartup.com") || value.includes("ycombinator.com")) return 20
-  return 20
+  const directory = value.includes("workatastartup.com") || value.includes("ycombinator.com")
+  if (!directory && (src === "career_page" || /\/(careers|jobs|openings|open-roles)\b/.test(value))) return 10
+  if (src === "yc" || directory) return 20
+  return 25
 }
 
 function samePosting(a: SourcePosting, b: SourcePosting): boolean {
@@ -108,10 +109,33 @@ export function dedupePostings(postings: SourcePosting[]): DedupedGroup[] {
     if (rootA !== rootB) parent[rootB] = rootA
   }
 
-  for (let i = 0; i < postings.length; i += 1) {
-    for (let j = i + 1; j < postings.length; j += 1) {
-      if (samePosting(postings[i], postings[j])) union(i, j)
+  const buckets = new Map<string, number[]>()
+  const add = (key: string, index: number) => {
+    const list = buckets.get(key)
+    if (list) list.push(index)
+    else buckets.set(key, [index])
+  }
+  postings.forEach((posting, index) => {
+    if (posting.externalId && posting.atsProvider) {
+      add(`ats:${posting.atsProvider}:${posting.externalId}`, index)
     }
+    add(`url:${normalizeUrl(posting.applicationUrl)}`, index)
+    add(
+      `role:${normalizeCompanyName(posting.companyName)}|${normalizeTitle(posting.title)}|${posting.city ?? ""}`,
+      index,
+    )
+  })
+  for (const [key, indexes] of buckets) {
+    if (indexes.length < 2) continue
+    if (key.startsWith("role:")) {
+      for (let i = 0; i < indexes.length; i += 1) {
+        for (let j = i + 1; j < indexes.length; j += 1) {
+          if (samePosting(postings[indexes[i]], postings[indexes[j]])) union(indexes[i], indexes[j])
+        }
+      }
+      continue
+    }
+    for (let i = 1; i < indexes.length; i += 1) union(indexes[0], indexes[i])
   }
 
   const groups = new Map<number, SourcePosting[]>()

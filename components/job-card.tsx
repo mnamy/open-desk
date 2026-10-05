@@ -31,6 +31,12 @@ export function JobCard({ job }: { job: CardModel }) {
             </Badge>
           ) : null}
           {job.isNew ? <Badge variant="secondary">New</Badge> : null}
+          <Badge variant="outline">{job.sample ? "Sample" : "Live"}</Badge>
+          {job.sourceBadges.map((source) => (
+            <Badge key={source} variant="secondary">
+              {source}
+            </Badge>
+          ))}
         </div>
         <div>
           <CardTitle className="font-heading text-2xl leading-tight">{job.title}</CardTitle>
@@ -46,9 +52,6 @@ export function JobCard({ job }: { job: CardModel }) {
           {job.discoveredLine ? <span className="text-muted-foreground"> · {job.discoveredLine}</span> : null}
         </p>
         {job.arrangementNote ? <p className="text-sm leading-6 text-muted-foreground">{job.arrangementNote}</p> : null}
-        <p className="text-sm leading-6">
-          <span className="text-muted-foreground">Sources</span> · {job.sources}
-        </p>
         <section>
           <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Why it matches</h3>
           <p className="mt-1 text-sm leading-6">{job.whyMatch}</p>

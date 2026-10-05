@@ -1,10 +1,15 @@
 import { randomUUID } from "node:crypto"
 import type { PGlite } from "@electric-sql/pglite"
+import { COMPANY_SEED } from "@/data/company-seed"
 import { postingsFor } from "@/data/sample-postings"
 import { createClassifier } from "@/lib/llm/classifier"
 import type { Classification, QualificationRisk } from "@/lib/llm/types"
 import type { ProcessedJob } from "@/lib/jobs/pipeline"
 import { processPostings } from "@/lib/jobs/pipeline"
+import { normalizeCompanyName } from "@/lib/jobs/text"
+import { createHttpClient } from "@/lib/sources/http"
+import { collectLivePostings, type CheckedCompany, type LiveCollection } from "@/lib/sources/live-search"
+import type { SeedCompany } from "@/data/company-seed"
 
 export type FeedbackAction = "save" | "applied" | "not_interested" | "restore"
 
@@ -32,6 +37,7 @@ export interface DeskJob {
   stretchReason: string | null
   feedBucket: "main" | "stretch" | "excluded"
   isNew: boolean
+  sample: boolean
   sources: DeskSource[]
   actions: string[]
 }
@@ -45,6 +51,14 @@ export interface SearchRun {
   jobsMain: number
   jobsStretch: number
   jobsExcluded: number
+  companiesChecked: number
+  postingsFetched: number
+  duplicatesRemoved: number
+  excludedLocation: number
+  excludedArrangement: number
+  excludedExperience: number
+  warnings: string[]
+  runKind: "sample" | "live"
 }
 
 export interface ImportSummary {
@@ -53,6 +67,13 @@ export interface ImportSummary {
   jobsMain: number
   jobsStretch: number
   jobsExcluded: number
+  companiesChecked: number
+  postingsFetched: number
+  duplicatesRemoved: number
+  excludedLocation: number
+  excludedArrangement: number
+  excludedExperience: number
+  warnings: string[]
 }
 
 function asDate(value: Date | string | null | undefined): Date | null {
@@ -69,7 +90,22 @@ function stamp(date: Date | null): string | null {
   return date ? date.toISOString() : null
 }
 
-export async function importPostings(db: PGlite, mode: "seed" | "search", now = new Date()): Promise<ImportSummary> {
+export async function importLiveSearch(db: PGlite, now = new Date()): Promise<ImportSummary> {
+  const saved = await listSavedCompanies(db)
+  const collected = await collectLivePostings({
+    companies: mergeSeedCompanies(COMPANY_SEED, saved),
+    client: createHttpClient({ cache: sourceCache(db) }),
+    now,
+  })
+  return importPostings(db, "search", now, collected)
+}
+
+export async function importPostings(
+  db: PGlite,
+  mode: "seed" | "search",
+  now = new Date(),
+  live?: LiveCollection,
+): Promise<ImportSummary> {
   const classifier = createClassifier({
     async get(hash) {
       const result = await db.query<{
@@ -102,13 +138,21 @@ export async function importPostings(db: PGlite, mode: "seed" | "search", now = 
     },
   })
 
-  const processed = await processPostings(postingsFor(mode), now, (input) => classifier.classify(input))
+  const rawPostings = live?.postings ?? postingsFor(mode)
+  const processed = await processPostings(rawPostings, now, (input) => classifier.classify(input))
   const summary: ImportSummary = {
     jobsSeen: processed.length,
     jobsNew: 0,
     jobsMain: processed.filter((job) => job.feedBucket === "main").length,
     jobsStretch: processed.filter((job) => job.feedBucket === "stretch").length,
     jobsExcluded: processed.filter((job) => job.feedBucket === "excluded").length,
+    companiesChecked: live?.companiesChecked ?? 0,
+    postingsFetched: rawPostings.length,
+    duplicatesRemoved: Math.max(rawPostings.length - processed.length, 0),
+    excludedLocation: processed.filter((job) => job.exclusionReason === "location").length,
+    excludedArrangement: processed.filter((job) => job.exclusionReason === "remote").length,
+    excludedExperience: processed.filter((job) => job.exclusionReason === "experience").length,
+    warnings: live?.warnings ?? [],
   }
 
   await db.exec("BEGIN")
@@ -133,12 +177,18 @@ export async function importPostings(db: PGlite, mode: "seed" | "search", now = 
       await replaceSources(db, jobId, job, now)
     }
 
+    if (live) {
+      await saveCheckedCompanies(db, live.checkedCompanies, now)
+    }
+
     if (mode === "search") {
       const finished = new Date()
       await db.query(
         `INSERT INTO search_runs (
-          id, started_at, finished_at, jobs_seen, jobs_new, jobs_main, jobs_stretch, jobs_excluded
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          id, started_at, finished_at, jobs_seen, jobs_new, jobs_main, jobs_stretch, jobs_excluded,
+          companies_checked, postings_fetched, duplicates_removed, excluded_location, excluded_arrangement,
+          excluded_experience, warnings, run_kind
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
         [
           randomUUID(),
           now.toISOString(),
@@ -148,6 +198,14 @@ export async function importPostings(db: PGlite, mode: "seed" | "search", now = 
           summary.jobsMain,
           summary.jobsStretch,
           summary.jobsExcluded,
+          summary.companiesChecked,
+          summary.postingsFetched,
+          summary.duplicatesRemoved,
+          summary.excludedLocation,
+          summary.excludedArrangement,
+          summary.excludedExperience,
+          summary.warnings.join("\n"),
+          live ? "live" : "sample",
         ],
       )
     }
@@ -321,6 +379,7 @@ interface JobRow {
   title: string
   company_name: string
   industry: string | null
+  discovered_from: string | null
   normalized_city: string | null
   work_arrangement: string
   experience_label: string | null
@@ -343,7 +402,7 @@ export async function listDeskJobs(db: PGlite): Promise<DeskJob[]> {
       j.id, j.title, j.role_family, j.normalized_city, j.work_arrangement, j.experience_label,
       j.posted_at, j.first_seen_at, j.application_url, j.source, j.opportunity_fit, j.qualification_risk,
       j.why_match, j.stretch_reason, j.feed_bucket, j.is_new,
-      c.name AS company_name, c.industry
+      c.name AS company_name, c.industry, c.discovered_from
     FROM jobs j
     JOIN companies c ON c.id = j.company_id
     WHERE j.feed_bucket <> 'excluded'`,
@@ -353,7 +412,7 @@ export async function listDeskJobs(db: PGlite): Promise<DeskJob[]> {
   )
   const feedback = await db.query<{ job_id: string; action: string }>("SELECT job_id, action FROM feedback")
 
-  return jobs.rows.map((row) => ({
+  const mapped = jobs.rows.map((row) => ({
     id: row.id,
     title: row.title,
     companyName: row.company_name,
@@ -372,12 +431,16 @@ export async function listDeskJobs(db: PGlite): Promise<DeskJob[]> {
     stretchReason: row.stretch_reason,
     feedBucket: row.feed_bucket,
     isNew: Boolean(row.is_new),
+    sample: row.discovered_from === "sample import",
     sources: sources.rows
       .filter((source) => source.job_id === row.id)
       .sort((a, b) => Number(b.source === row.source) - Number(a.source === row.source))
       .map((source) => ({ source: source.source, sourceUrl: source.source_url })),
     actions: feedback.rows.filter((item) => item.job_id === row.id).map((item) => item.action),
   }))
+  const liveExists = mapped.some((job) => !job.sample)
+  if (!liveExists) return mapped
+  return mapped.filter((job) => !job.sample || job.actions.includes("save") || job.actions.includes("applied"))
 }
 
 export async function latestSearchRun(db: PGlite): Promise<SearchRun | null> {
@@ -390,6 +453,14 @@ export async function latestSearchRun(db: PGlite): Promise<SearchRun | null> {
     jobs_main: number
     jobs_stretch: number
     jobs_excluded: number
+    companies_checked: number | null
+    postings_fetched: number | null
+    duplicates_removed: number | null
+    excluded_location: number | null
+    excluded_arrangement: number | null
+    excluded_experience: number | null
+    warnings: string | null
+    run_kind: string | null
   }>("SELECT * FROM search_runs ORDER BY started_at DESC LIMIT 1")
   const row = result.rows[0]
   if (!row) return null
@@ -402,6 +473,120 @@ export async function latestSearchRun(db: PGlite): Promise<SearchRun | null> {
     jobsMain: Number(row.jobs_main),
     jobsStretch: Number(row.jobs_stretch),
     jobsExcluded: Number(row.jobs_excluded),
+    companiesChecked: Number(row.companies_checked ?? 0),
+    postingsFetched: Number(row.postings_fetched ?? 0),
+    duplicatesRemoved: Number(row.duplicates_removed ?? 0),
+    excludedLocation: Number(row.excluded_location ?? 0),
+    excludedArrangement: Number(row.excluded_arrangement ?? 0),
+    excludedExperience: Number(row.excluded_experience ?? 0),
+    warnings: row.warnings ? row.warnings.split("\n").filter(Boolean) : [],
+    runKind: row.run_kind === "live" ? "live" : "sample",
+  }
+}
+
+function sourceCache(db: PGlite) {
+  const ttlMs = 6 * 60 * 60 * 1000
+  return {
+    async get(key: string): Promise<string | null> {
+      const result = await db.query<{ body: string; fetched_at: Date | string }>(
+        "SELECT body, fetched_at FROM source_cache WHERE cache_key = $1",
+        [key],
+      )
+      const row = result.rows[0]
+      if (!row) return null
+      const fetched = asDate(row.fetched_at)
+      if (!fetched || Date.now() - fetched.getTime() > ttlMs) return null
+      return row.body
+    },
+    async set(key: string, body: string): Promise<void> {
+      await db.query(
+        `INSERT INTO source_cache (cache_key, body, fetched_at) VALUES ($1, $2, $3)
+         ON CONFLICT (cache_key) DO UPDATE SET body = EXCLUDED.body, fetched_at = EXCLUDED.fetched_at`,
+        [key, body, new Date().toISOString()],
+      )
+    },
+  }
+}
+
+async function listSavedCompanies(db: PGlite): Promise<SeedCompany[]> {
+  const result = await db.query<{
+    name: string
+    website: string | null
+    careers_url: string | null
+    industry: string | null
+    ats_provider: string | null
+    ats_identifier: string | null
+    discovered_from: string | null
+  }>(
+    `SELECT name, website, careers_url, industry, ats_provider, ats_identifier, discovered_from
+     FROM companies
+     WHERE discovered_from IS DISTINCT FROM 'sample import'`,
+  )
+  return result.rows.map((row) => ({
+    name: row.name,
+    website: row.website ?? undefined,
+    careersUrl: row.careers_url ?? undefined,
+    industry: row.industry ?? undefined,
+    atsProvider:
+      row.ats_provider === "greenhouse" || row.ats_provider === "ashby" || row.ats_provider === "lever"
+        ? row.ats_provider
+        : undefined,
+    atsIdentifier: row.ats_identifier ?? undefined,
+  }))
+}
+
+function mergeSeedCompanies(seed: SeedCompany[], saved: SeedCompany[]): SeedCompany[] {
+  const byName = new Map<string, SeedCompany>()
+  for (const company of seed) byName.set(normalizeCompanyName(company.name), { ...company })
+  for (const company of saved) {
+    const key = normalizeCompanyName(company.name)
+    const existing = byName.get(key)
+    if (!existing) {
+      byName.set(key, company)
+      continue
+    }
+    byName.set(key, {
+      ...existing,
+      website: existing.website ?? company.website,
+      careersUrl: existing.careersUrl ?? company.careersUrl,
+      industry: existing.industry ?? company.industry,
+      atsProvider: existing.atsProvider ?? company.atsProvider,
+      atsIdentifier: existing.atsIdentifier ?? company.atsIdentifier,
+    })
+  }
+  return [...byName.values()]
+}
+
+async function saveCheckedCompanies(db: PGlite, companies: CheckedCompany[], now: Date) {
+  for (const company of companies) {
+    await db.query(
+      `INSERT INTO companies (
+        id, name, normalized_name, website, careers_url, ats_provider, ats_identifier, industry, discovered_from, last_checked_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      ON CONFLICT (normalized_name) DO UPDATE SET
+        website = COALESCE(EXCLUDED.website, companies.website),
+        careers_url = COALESCE(EXCLUDED.careers_url, companies.careers_url),
+        ats_provider = COALESCE(EXCLUDED.ats_provider, companies.ats_provider),
+        ats_identifier = COALESCE(EXCLUDED.ats_identifier, companies.ats_identifier),
+        industry = COALESCE(EXCLUDED.industry, companies.industry),
+        discovered_from = CASE
+          WHEN companies.discovered_from = 'sample import' THEN EXCLUDED.discovered_from
+          ELSE companies.discovered_from
+        END,
+        last_checked_at = EXCLUDED.last_checked_at`,
+      [
+        randomUUID(),
+        company.name,
+        company.normalizedName,
+        company.website ?? null,
+        company.careersUrl ?? null,
+        company.atsProvider ?? null,
+        company.atsIdentifier ?? null,
+        company.industry ?? null,
+        company.discoveredFrom,
+        now.toISOString(),
+      ],
+    )
   }
 }
 
