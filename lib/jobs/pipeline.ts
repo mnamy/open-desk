@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { dedupePostings, type SourcePosting } from "@/lib/jobs/dedup"
 import { evaluateHardFilters, type ExclusionReason, type FeedBucket } from "@/lib/jobs/evaluate"
-import type { Classification, JobClassifier } from "@/lib/llm/types"
+import type { Classification, ClassificationInput, JobClassifier } from "@/lib/llm/types"
 import { classifyDeterministic } from "@/lib/scoring/score"
 import type { RawPosting } from "@/lib/sources/types"
 import { normalizeCompanyName, normalizeTitle } from "@/lib/jobs/text"
@@ -167,7 +167,7 @@ export async function processPostings(
 
     let classification: Classification | null = null
     if (evaluation.feedBucket !== "excluded") {
-      const input = {
+      const input: ClassificationInput = {
         companyName: raw.companyName,
         title: raw.title,
         description: raw.description,
