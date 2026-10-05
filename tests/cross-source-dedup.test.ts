@@ -99,4 +99,36 @@ describe("canonical URL choice", () => {
     ])
     expect(group.applicationUrl).toBe("https://northwind.example/careers/associate-product-manager")
   })
+
+  it("prefers a company ATS link over Wellfound and Welcome to the Jungle", () => {
+    const [group] = dedupePostings([
+      posting({
+        source: "wellfound",
+        applicationUrl: "https://wellfound.com/jobs/4670481-associate-product-manager",
+        description: `${BODY} Wellfound.`,
+      }),
+      posting({
+        source: "welcome_to_the_jungle",
+        applicationUrl: "https://www.welcometothejungle.com/en/companies/northwind/jobs/associate-product-manager",
+        description: `${BODY} Welcome to the Jungle.`,
+      }),
+      posting({
+        source: "greenhouse",
+        applicationUrl: "https://boards.greenhouse.io/northwind/jobs/42",
+        externalId: "42",
+        atsProvider: "greenhouse",
+        description: `${BODY} Greenhouse.`,
+      }),
+    ])
+
+    expect(group.postings).toHaveLength(3)
+    expect(group.applicationUrl).toBe("https://boards.greenhouse.io/northwind/jobs/42")
+    expect(group.canonicalSource).toBe("greenhouse")
+    expect(applicationPreference("greenhouse", group.applicationUrl)).toBeLessThan(
+      applicationPreference("wellfound", "https://wellfound.com/jobs/4670481-associate-product-manager"),
+    )
+    expect(applicationPreference("wellfound", "https://wellfound.com/jobs/4670481-associate-product-manager")).toBeLessThan(
+      applicationPreference("linkedin", "https://www.linkedin.com/jobs/view/1"),
+    )
+  })
 })

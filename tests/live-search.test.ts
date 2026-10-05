@@ -37,6 +37,7 @@ describe("live pipeline with partial source failures", () => {
       now,
       fetchYc: false,
       discoverCareers: false,
+      fetchMarketplaces: false,
       client,
       companies: [
         { name: "Broken Co", atsProvider: "greenhouse", atsIdentifier: "broken", website: "https://broken.example" },

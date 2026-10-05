@@ -6,6 +6,8 @@ import { greenhouseJobsToPostings, type GreenhouseJob } from "@/lib/sources/gree
 import { mapPool, type HttpClient } from "@/lib/sources/http"
 import { leverJobsToPostings, type LeverJob } from "@/lib/sources/lever"
 import type { RawPosting } from "@/lib/sources/types"
+import { fetchWelcomePage, readWelcomeConfig, welcomeHitsToPostings, WELCOME_MAX_PAGES, type WelcomeHit } from "@/lib/sources/welcome"
+import { wellfoundHtmlToPostings, wellfoundSearchUrls } from "@/lib/sources/wellfound"
 import { YC_CITY_QUERIES, ycCards, ycDetailToPosting, type YcJobCard } from "@/lib/sources/yc"
 
 export interface CheckedCompany {
@@ -103,17 +105,86 @@ async function fetchYc(client: HttpClient, now: Date, detailCap: number): Promis
   return { postings: batches.filter((posting): posting is RawPosting => Boolean(posting)), warnings }
 }
 
+async function fetchWellfound(client: HttpClient, now: Date, urls = wellfoundSearchUrls()): Promise<{ postings: RawPosting[]; warnings: string[] }> {
+  const warnings: string[] = []
+  let failed = 0
+  const batches = await mapPool(urls, 4, async (url) => {
+    try {
+      const html = await client.getText(url, 15_000)
+      return wellfoundHtmlToPostings(html, now)
+    } catch {
+      failed += 1
+      return [] as RawPosting[]
+    }
+  })
+  if (failed > 0) warnings.push(`Wellfound: ${failed} search pages could not be read`)
+  const seen = new Set<string>()
+  const postings = batches.flat().filter((posting) => {
+    if (seen.has(posting.id)) return false
+    seen.add(posting.id)
+    return true
+  })
+  return { postings, warnings }
+}
+
+async function fetchWelcome(
+  client: HttpClient,
+  now: Date,
+  pages = WELCOME_MAX_PAGES,
+  startPage = 0,
+): Promise<{ postings: RawPosting[]; warnings: string[] }> {
+  const warnings: string[] = []
+  try {
+    if (!client.postJson) {
+      warnings.push("Welcome to the Jungle: search client unavailable")
+      return { postings: [], warnings }
+    }
+    const html = await client.getText(CONFIG_URL, 12_000)
+    const config = readWelcomeConfig(html)
+    if (!config) {
+      warnings.push("Welcome to the Jungle: public search config was not found")
+      return { postings: [], warnings }
+    }
+    const hits: WelcomeHit[] = []
+    for (let page = startPage; page < startPage + pages; page += 1) {
+      const batch = await fetchWelcomePage(client, config, page)
+      hits.push(...batch)
+      if (batch.length < 100) break
+    }
+    return { postings: welcomeHitsToPostings(hits, now), warnings }
+  } catch (error) {
+    warnings.push(`Welcome to the Jungle: ${warningText(error)}`)
+    return { postings: [], warnings }
+  }
+}
+
+const CONFIG_URL = "https://www.welcometothejungle.com/en/sitemap.xml"
+
+function rememberCompanies(postings: RawPosting[], discoveredFrom: string, checked: CheckedCompany[]) {
+  for (const posting of postings) {
+    checked.push(
+      checkedFrom(
+        { name: posting.companyName, website: posting.companyWebsite, industry: posting.industry },
+        discoveredFrom,
+        { website: posting.companyWebsite },
+      ),
+    )
+  }
+}
+
 export async function collectLivePostings(options: {
   companies: SeedCompany[]
   client: HttpClient
   now?: Date
   fetchYc?: boolean
   discoverCareers?: boolean
+  fetchMarketplaces?: boolean
   limits?: { ycDetails?: number; discoveryCompanies?: number }
 }): Promise<LiveCollection> {
   const now = options.now ?? new Date()
   const fetchYcJobs = options.fetchYc !== false
   const discover = options.discoverCareers !== false
+  const fetchMarkets = options.fetchMarketplaces !== false
   const ycCap = options.limits?.ycDetails ?? 80
   const discoveryCap = options.limits?.discoveryCompanies ?? 40
   const warnings: string[] = []
@@ -156,6 +227,17 @@ export async function collectLivePostings(options: {
         ),
       )
     }
+  }
+
+  if (fetchMarkets) {
+    const wellfound = await fetchWellfound(options.client, now)
+    postings.push(...wellfound.postings)
+    warnings.push(...wellfound.warnings)
+    rememberCompanies(wellfound.postings, "wellfound", checked)
+    const welcome = await fetchWelcome(options.client, now)
+    postings.push(...welcome.postings)
+    warnings.push(...welcome.warnings)
+    rememberCompanies(welcome.postings, "welcome_to_the_jungle", checked)
   }
 
   if (discover) {
@@ -236,13 +318,15 @@ export async function collectLivePostings(options: {
 
 export interface SearchCursor {
   companies: SeedCompany[]
-  phase: "boards" | "yc-search" | "yc-details" | "discover" | "followup" | "done"
+  phase: "boards" | "yc-search" | "yc-details" | "discover" | "followup" | "wellfound" | "welcome" | "done"
   boardIndex: number
   ycIds: number[]
   ycIndex: number
   discoveryIndex: number
   followUps: SeedCompany[]
   seenBoards: string[]
+  wellfoundIndex?: number
+  welcomePage?: number
 }
 
 const SLICE_BOARD_TIMEOUT_MS = 12_000
@@ -251,6 +335,7 @@ const SLICE_MAX_POSTINGS = 100
 const SLICE_BUDGET_MS = 18_000
 const SLICE_YC_DETAILS = 8
 const SLICE_DISCOVERY = 3
+const SLICE_WELLFOUND = 8
 
 export function initialCursor(companies: SeedCompany[]): SearchCursor {
   return {
@@ -262,6 +347,8 @@ export function initialCursor(companies: SeedCompany[]): SearchCursor {
     discoveryIndex: 0,
     followUps: [],
     seenBoards: [],
+    wellfoundIndex: 0,
+    welcomePage: 0,
   }
 }
 
@@ -283,12 +370,20 @@ function boardKey(company: SeedCompany): string | null {
 }
 
 function skipEmpty(cursor: SearchCursor): SearchCursor {
-  const next = { ...cursor, followUps: [...cursor.followUps], seenBoards: [...cursor.seenBoards] }
+  const next = {
+    ...cursor,
+    followUps: [...cursor.followUps],
+    seenBoards: [...cursor.seenBoards],
+    wellfoundIndex: cursor.wellfoundIndex ?? 0,
+    welcomePage: cursor.welcomePage ?? 0,
+  }
   while (true) {
     if (next.phase === "boards" && next.boardIndex >= boardTargets(next).length) next.phase = "yc-search"
     else if (next.phase === "yc-details" && next.ycIndex >= next.ycIds.length) next.phase = "discover"
     else if (next.phase === "discover" && next.discoveryIndex >= discoveryTargets(next).length) next.phase = "followup"
-    else if (next.phase === "followup" && next.followUps.length === 0) next.phase = "done"
+    else if (next.phase === "followup" && next.followUps.length === 0) next.phase = "wellfound"
+    else if (next.phase === "wellfound" && next.wellfoundIndex >= wellfoundSearchUrls().length) next.phase = "welcome"
+    else if (next.phase === "welcome" && next.welcomePage >= WELCOME_MAX_PAGES) next.phase = "done"
     else break
   }
   return next
@@ -299,6 +394,7 @@ export async function collectNextSlice(options: {
   client: HttpClient
   now?: Date
   fetchYc?: boolean
+  fetchMarketplaces?: boolean
 }): Promise<{ cursor: SearchCursor; collection: LiveCollection }> {
   const now = options.now ?? new Date()
   const cursor = skipEmpty(options.cursor)
@@ -307,7 +403,13 @@ export async function collectNextSlice(options: {
   if (cursor.phase === "yc-search") return options.fetchYc === false ? skipYc(cursor) : collectYcSearch(cursor, options.client)
   if (cursor.phase === "yc-details") return collectYcDetails(cursor, options.client, now)
   if (cursor.phase === "discover") return collectDiscoverySlice(cursor, options.client, now)
-  return collectFollowUp(cursor, options.client, now)
+  if (cursor.phase === "followup") return collectFollowUp(cursor, options.client, now)
+  if (cursor.phase === "wellfound") return options.fetchMarketplaces === false ? skipMarket(cursor, "welcome") : collectWellfoundSlice(cursor, options.client, now)
+  return options.fetchMarketplaces === false ? skipMarket(cursor, "done") : collectWelcomeSlice(cursor, options.client, now)
+}
+
+function skipMarket(cursor: SearchCursor, phase: SearchCursor["phase"]) {
+  return { cursor: skipEmpty({ ...cursor, phase, wellfoundIndex: wellfoundSearchUrls().length, welcomePage: WELCOME_MAX_PAGES }), collection: emptyCollection() }
 }
 
 async function collectBoardSlice(cursor: SearchCursor, client: HttpClient, now: Date) {
@@ -450,6 +552,26 @@ async function collectFollowUp(cursor: SearchCursor, client: HttpClient, now: Da
   }
   const next = skipEmpty({ ...cursor, followUps: rest })
   return { cursor: next, collection: collectionFrom(postings, warnings, []) }
+}
+
+async function collectWellfoundSlice(cursor: SearchCursor, client: HttpClient, now: Date) {
+  const urls = wellfoundSearchUrls()
+  const start = cursor.wellfoundIndex ?? 0
+  const batch = urls.slice(start, start + SLICE_WELLFOUND)
+  const found = await fetchWellfound(client, now, batch)
+  const checked: CheckedCompany[] = []
+  rememberCompanies(found.postings, "wellfound", checked)
+  const next = skipEmpty({ ...cursor, wellfoundIndex: start + batch.length })
+  return { cursor: next, collection: collectionFrom(found.postings, found.warnings, checked) }
+}
+
+async function collectWelcomeSlice(cursor: SearchCursor, client: HttpClient, now: Date) {
+  const page = cursor.welcomePage ?? 0
+  const found = await fetchWelcome(client, now, 1, page)
+  const checked: CheckedCompany[] = []
+  rememberCompanies(found.postings, "welcome_to_the_jungle", checked)
+  const next = skipEmpty({ ...cursor, welcomePage: page + 1 })
+  return { cursor: next, collection: collectionFrom(found.postings, found.warnings, checked) }
 }
 
 function collectionFrom(postings: RawPosting[], warnings: string[], checked: CheckedCompany[]): LiveCollection {

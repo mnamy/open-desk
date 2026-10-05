@@ -203,7 +203,7 @@ export async function importPostings(
 
 export async function continueLiveSearch(
   input: Database,
-  options?: { now?: Date; client?: HttpClient; companies?: SeedCompany[]; fetchYc?: boolean },
+  options?: { now?: Date; client?: HttpClient; companies?: SeedCompany[]; fetchYc?: boolean; fetchMarketplaces?: boolean },
 ): Promise<{ done: boolean; progress: string }> {
   const db = asSql(input)
   const now = options?.now ?? new Date()
@@ -213,7 +213,13 @@ export async function continueLiveSearch(
     run = await startLiveSearch(db, initialCursor(companies), now)
   }
   const client = options?.client ?? createHttpClient({ cache: sourceCache(db) })
-  const slice = await collectNextSlice({ cursor: run.cursor, client, now, fetchYc: options?.fetchYc })
+  const slice = await collectNextSlice({
+    cursor: run.cursor,
+    client,
+    now,
+    fetchYc: options?.fetchYc,
+    fetchMarketplaces: options?.fetchMarketplaces,
+  })
   const processed = await processPostings(slice.collection.postings, now, (job) =>
     createClassifier({
       async get(hash) {

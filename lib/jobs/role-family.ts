@@ -23,7 +23,7 @@ const TITLE_RULES: { family: string; re: RegExp }[] = [
   },
   {
     family: "User research",
-    re: /\b(user researchers?|ux researchers?|design researchers?|user research|ux research)\b/i,
+    re: /\b(user researchers?|ux researchers?|design researchers?|user research|ux research|product researchers?|product research|research associates?|researchers?)\b/i,
   },
   {
     family: "Insights",
@@ -31,15 +31,15 @@ const TITLE_RULES: { family: string; re: RegExp }[] = [
   },
   {
     family: "Product",
-    re: /\b(product managers?|product management|associate product|product associates?|product operations|product ops|product strateg(?:y|ist)|product generalists?|product analysts?|\bapm\b)\b/i,
+    re: /\b(product managers?|product management|associate product|product associates?|product operations|product ops|product strateg(?:y|ist)|product generalists?|product analysts?|product development|\bapm\b)\b/i,
   },
   {
     family: "Founder's office",
-    re: /founder'?s(?:\s+office|\s+associate)?|chief of staff/i,
+    re: /founder'?s(?:\s+office|\s+associate)?|chief of staff|founding associates?|startup generalists?/i,
   },
   {
     family: "Strategy & operations",
-    re: /\b(strategy\s*(?:&|and)\s*operations|business operations|biz\s?ops|strategy associates?)\b/i,
+    re: /\b(strategy\s*(?:&|and)\s*operations|business operations|biz\s?ops|strategy associates?|strategists?|technology strategy|business analysts?)\b/i,
   },
   {
     family: "Innovation",
@@ -122,6 +122,10 @@ export function sourceLabel(source: string): string {
       return "YC"
     case "career_page":
       return "Career page"
+    case "wellfound":
+      return "Wellfound"
+    case "welcome_to_the_jungle":
+      return "Welcome to the Jungle"
     default:
       return source
   }

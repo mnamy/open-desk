@@ -27,6 +27,11 @@ describe("role family follows the title", () => {
     expect(inferRoleFamily("UX Researcher", "Strategy planning.")).toBe("User research")
     expect(inferRoleFamily("Business Operations Associate", "")).toBe("Strategy & operations")
     expect(inferRoleFamily("Founder's Associate", "")).toBe("Founder's office")
+    expect(inferRoleFamily("Startup Generalist", "")).toBe("Founder's office")
+    expect(inferRoleFamily("Founding Associate", "")).toBe("Founder's office")
+    expect(inferRoleFamily("Research Associate", "")).toBe("User research")
+    expect(inferRoleFamily("Strategist", "")).toBe("Strategy & operations")
+    expect(inferRoleFamily("Product Development Associate", "")).toBe("Product")
   })
 })
 
@@ -164,6 +169,54 @@ describe("hard rejects stay out of the working feeds", () => {
     )
     expect(peopleLead.feedBucket).toBe("excluded")
     expect(peopleLead.exclusionReason).toBe("seniority")
+  })
+
+  it("infers level when years are unstated", () => {
+    const junior = judged(
+      "Product Manager",
+      "Day to day: write feature requirements and talk to users. You will not manage people. No years are stated.",
+    )
+    expect(junior.feedBucket).toBe("main")
+    expect(junior.exclusionReason).toBeNull()
+
+    const ambiguous = judged("Product Designer", "Design the core product experience with the design team. No years are stated.")
+    expect(ambiguous.feedBucket).toBe("main")
+
+    const plain = judged("Researcher", "Study how people use the product and share findings. No years are stated.")
+    expect(plain.feedBucket).toBe("stretch")
+    expect(plain.exclusionReason).toBeNull()
+
+    const seniorScope = judged(
+      "Product Manager",
+      "As a tenured member, you will manage a team of designers and own the function. No years are stated.",
+    )
+    expect(seniorScope.feedBucket).toBe("excluded")
+    expect(seniorScope.exclusionReason).toBe("seniority")
+  })
+
+  it("keeps a two-year requirement visible and rejects three or more", () => {
+    const two = judged(
+      "Product Manager",
+      "2 years of experience required. Day to day: talk to users and write what to build with the product team.",
+    )
+    expect(two.feedBucket).toBe("stretch")
+    expect(two.exclusionReason).toBeNull()
+
+    const three = judged(
+      "Product Associate",
+      "3+ years of experience required. Day to day: talk to users and write what to build.",
+    )
+    expect(three.feedBucket).toBe("excluded")
+    expect(three.exclusionReason).toBe("experience")
+  })
+
+  it("keeps a weird startup title when the work is product-heavy", () => {
+    const ranger = judged(
+      "Zero to One Ranger",
+      "Day to day: talk to users, run user research, prototype the first version, and launch the product with the product team.",
+    )
+    expect(ranger.feedBucket).not.toBe("excluded")
+    expect(ranger.roleFamily).toBe("Adjacent")
   })
 
   it("keeps product, research, design, and strategy roles when they look entry level", () => {

@@ -27,8 +27,8 @@ describe("sample pipeline", () => {
     expect(byTitle("Northshore Health", "Customer Experience Associate")?.workArrangement).toBe("unclear")
     expect(byTitle("Northshore Health", "Customer Experience Associate")?.feedBucket).toBe("main")
 
-    expect(byTitle("Fieldnote", "Product Strategy Associate")?.feedBucket).toBe("stretch")
-    expect(byTitle("Barton Supply", "Business Operations Associate")?.feedBucket).toBe("stretch")
+    expect(byTitle("Fieldnote", "Product Strategy Associate")?.feedBucket).toBe("main")
+    expect(byTitle("Barton Supply", "Business Operations Associate")?.feedBucket).toBe("main")
     expect(byTitle("Harborlight", "UX Researcher")?.feedBucket).toBe("stretch")
     expect(byTitle("Kindred Social", "Growth Strategy Analyst")?.feedBucket).toBe("stretch")
     expect(byTitle("Fieldnote", "Product Strategy Associate")?.qualificationRisk).toBe("MEDIUM")

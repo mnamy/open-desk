@@ -44,6 +44,7 @@ describe("batched live search", () => {
         now,
         client,
         fetchYc: false,
+        fetchMarketplaces: false,
         companies: [
           { name: "Broken Co", atsProvider: "greenhouse", atsIdentifier: "broken", website: "https://broken.example" },
           { name: "Ramp", atsProvider: "ashby", atsIdentifier: "ramp", website: "https://ramp.com", industry: "Fintech" },

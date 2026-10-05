@@ -33,16 +33,39 @@ export interface EligibilityDecision {
 }
 
 const ENTRY_TITLE =
-  /\b(associates?|junior|jr\.?|early[- ]career|new grads?|new graduates?|recent grads?|entry[- ]level|\bapm\b|rotational|coordinator)\b/i
+  /\b(associates?|junior|jr\.?|early[- ]career|new grads?|new graduates?|recent grads?|entry[- ]level|\bapm\b|rotational|coordinator|analysts?|generalists?)\b/i
 
 const EXPLICIT_ENTRY =
   /\b(new grads?|new graduates?|recent graduates?|recent college graduates?|entry[- ]level|early career|this is a junior|junior role|no experience required)\b/i
 
+const EARLY_IC_TITLE =
+  /\b((?:ux|user|design|product)\s+researchers?|(?:product|ux|ui)\s+designers?)\b/i
+
 const SENIOR_SCOPE =
-  /\b(people manager|direct reports|manage (?:a |the )?(?:team of|team\b|people|engineers|designers|researchers|managers)|managing (?:a |the )?team\b|lead (?:a |the |our )(?:team|organization|department|function)|build and lead|hire and (?:manage|develop)|manager of managers|\bp&l\b|budget ownership|revenue ownership|company-wide|lead the organization|strategic leader|extensive experience|proven track record|seasoned|tenured|own the vision|set the vision|define the vision)\b/i
+  /\b(people manager|direct reports|(?<!\b(?:not|no|without|never) )manage (?:a |the )?(?:team of|team\b|people|engineers|designers|researchers|managers)|(?<!\b(?:not|no|without|never) )managing (?:a |the )?team\b|lead (?:a |the |our )(?:team|organization|department|function)|build and lead|hire and (?:manage|develop)|manager of managers|\bp&l\b|budget ownership|revenue ownership|extensive experience|proven track record|seasoned|tenured)\b/i
+
+const ABOVE_ENTRY =
+  /\b(own the vision|set the vision|define the vision|company-wide|executive team|report to the (?:ceo|founder|executive)|lead the (?:product|function|organization)|extensive expertise|deep expertise)\b/i
+
+const JUNIOR_IC =
+  /\b(individual contributor|no direct reports|talk to users|talking to users|interview users|interview customers|write (?:the )?(?:feature|product) requirements|this is a junior role)\b/i
+
+const ADJACENT_SIGNALS: RegExp[] = [
+  /\btalk(?:ing)? to (?:users|customers|shoppers)\b/i,
+  /\b(?:user|ux) research\b/i,
+  /\bproduct development\b/i,
+  /\bexperiment(?:s|ation)?\b/i,
+  /\bprototyp/i,
+  /\blaunch(?:ing)? (?:a |the )?(?:features|products|product)\b/i,
+  /\banalytics\b/i,
+  /\bcustomer experience\b/i,
+  /\bcross-functional\b/i,
+  /\b(?:product|design|engineering) team\b/i,
+  /\b0\s*(?:→|to)\s*1\b/i,
+]
 
 const PEOPLE_LEADERSHIP =
-  /\b(people manager|direct reports|manage (?:a |the )?(?:team of|team\b|people|engineers|designers|researchers|managers)|managing (?:a |the )?team\b|build and lead (?:a |the )?team|hire and (?:manage|develop)|manager of managers)\b/i
+  /\b(people manager|direct reports|(?<!\b(?:not|no|without|never) )manage (?:a |the )?(?:team of|team\b|people|engineers|designers|researchers|managers)|(?<!\b(?:not|no|without|never) )managing (?:a |the )?team\b|build and lead (?:a |the )?team|hire and (?:manage|develop)|manager of managers)\b/i
 
 const DESIGN_CENTERED =
   /\b(user experience|\bux\b|user interface|interaction design|figma|creative technology|in the browser|front-end|frontend)\b/i
@@ -122,7 +145,7 @@ export function isSalesRole(title: string, description: string, family: string):
 }
 
 function hardNegative(title: string, description: string): boolean {
-  if (/\b(physician|surgeon|registered nurse|\bnurse\b|therapist|clinician|pharmacist|dentist|medical assistant)\b/i.test(title)) {
+  if (/\b(physician|surgeon|registered nurse|\bnurse\b|therapist|clinician|pharmacist|dentist|medical assistant|clinical research|laboratory|wet lab)\b/i.test(title)) {
     return true
   }
   if (/\b(recruiter|recruiting|talent acquisition|\bsourcer\b)\b/i.test(title)) return true
@@ -190,9 +213,8 @@ export function roleTier(family: string, title: string, description: string): Ro
     return /\b(user research|experiment|voice of customer|product team|product issue|product feedback)\b/i.test(description) ? 2 : 3
   }
   if (family === "Consulting") {
-    const early = ENTRY_TITLE.test(title)
-    const digital = /\b(digital|product|\bux\b|user experience|technology)\b/i.test(text)
-    return early && digital ? 2 : 0
+    const digital = /\b(digital|product|\bux\b|user experience|technology|innovation)\b/i.test(text)
+    return digital ? 2 : 0
   }
   if (family === "Program" || family === "Community" || family === "Implementation") return 3
   return 0
@@ -207,7 +229,23 @@ function stretchSignal(experience: ExperienceParse, ambiguous: boolean): LevelSi
 }
 
 function entryLooking(title: string, description: string, experience: ExperienceParse): boolean {
-  return experience.bucket === "main" || ENTRY_TITLE.test(title) || EXPLICIT_ENTRY.test(description)
+  return experience.bucket === "main" || earlyIcTitle(title) || EXPLICIT_ENTRY.test(description)
+}
+
+function earlyIcTitle(title: string): boolean {
+  return ENTRY_TITLE.test(title) || EARLY_IC_TITLE.test(title)
+}
+
+function adjacentCount(description: string): number {
+  return ADJACENT_SIGNALS.reduce((count, pattern) => count + (pattern.test(description) ? 1 : 0), 0)
+}
+
+function earlyPreferred(experience: ExperienceParse): boolean {
+  if (experience.bucket !== "stretch") return false
+  if (experience.requiredOrPreferred !== "preferred" && experience.requiredOrPreferred !== "mixed") return false
+  const min = experience.experienceMin
+  const max = experience.experienceMax
+  return (min === 1 && max === 2) || (min === 2 && max === 2)
 }
 
 export function assessEligibility(input: {
@@ -217,8 +255,9 @@ export function assessEligibility(input: {
   experience: ExperienceParse
 }): EligibilityDecision {
   input = { ...input, description: plainText(input.description) }
-  const family = inferRoleFamily(input.title, input.description)
-  const tier = roleTier(family, input.title, input.description)
+  const originalFamily = inferRoleFamily(input.title, input.description)
+  let family = originalFamily
+  let tier = roleTier(family, input.title, input.description)
   const tags: EligibilityTags = {
     seniority: titleIsSenior(input.title) || peopleManager(input.title, input.description),
     engineering: isEngineeringRole(input.title, input.description, family),
@@ -245,12 +284,17 @@ export function assessEligibility(input: {
     return reject("relevance")
   }
   if (input.experience.bucket === "reject") return reject("experience")
-  if (input.experience.bucket === "unknown" && SENIOR_SCOPE.test(input.description) && !ENTRY_TITLE.test(input.title)) {
+  if (input.experience.bucket === "unknown" && SENIOR_SCOPE.test(input.description)) {
     tags.seniority = true
     return reject("seniority")
   }
 
   const signals = TIER3_SIGNALS.test(input.description)
+  const adjacent = adjacentCount(input.description)
+  if (tier === 0 && adjacent >= 3) {
+    family = "Adjacent"
+    tier = 2
+  }
   if (tier === 0) return reject("relevance")
   if (tier === 3 && !signals) return reject("relevance")
 
@@ -260,20 +304,26 @@ export function assessEligibility(input: {
     tags,
     exclusionReason: null,
   }
+  const above = ABOVE_ENTRY.test(input.description)
+  const knownFamily = originalFamily !== "Other"
+  const juniorScope = JUNIOR_IC.test(input.description) || EXPLICIT_ENTRY.test(input.description)
+
+  if (earlyPreferred(input.experience)) {
+    if (tier === 3 && !signals) return reject("relevance")
+    return { ...base, feedBucket: "main", levelSignal: "modest" }
+  }
 
   if (input.experience.bucket === "stretch") {
     const min = input.experience.experienceMin ?? 0
     const max = input.experience.experienceMax ?? min
     if (min >= 3 || (min >= 2 && max >= 5)) return reject("experience")
-    if (tier === 3 && !entryLooking(input.title, input.description, input.experience)) return reject("relevance")
-    return { ...base, feedBucket: "stretch", levelSignal: stretchSignal(input.experience, false) }
+    if (tier === 3 && !entryLooking(input.title, input.description, input.experience) && !signals) return reject("relevance")
+    return { ...base, feedBucket: "stretch", levelSignal: stretchSignal(input.experience, above) }
   }
 
   if (input.experience.bucket === "unknown") {
-    if (entryLooking(input.title, input.description, input.experience)) {
-      return { ...base, feedBucket: "main", levelSignal: "entry" }
-    }
-    if (tier === 3) return reject("relevance")
+    const believable = !above && (earlyIcTitle(input.title) || (knownFamily && juniorScope))
+    if (believable) return { ...base, feedBucket: "main", levelSignal: "entry" }
     return { ...base, feedBucket: "stretch", levelSignal: "high" }
   }
 

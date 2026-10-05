@@ -4,12 +4,12 @@ import { plainText } from "@/lib/jobs/text"
 import { arrangementLabel } from "@/lib/jobs/work-arrangement"
 
 export const FIT_WEIGHTS = {
-  role: 0.34,
+  role: 0.32,
   level: 0.18,
   product: 0.18,
   ownership: 0.12,
-  industry: 0.1,
-  startup: 0.08,
+  startup: 0.12,
+  industry: 0.08,
 } as const
 
 const INDUSTRY_BOOSTS: { re: RegExp; label: string }[] = [
@@ -34,7 +34,7 @@ function clamp(value: number): number {
 
 export function contentHash(input: Pick<ClassificationInput, "companyName" | "title" | "description">): string {
   return createHash("sha256")
-    .update(`relevance-v2\n${input.companyName}\n${input.title}\n${input.description}`)
+    .update(`relevance-v3\n${input.companyName}\n${input.title}\n${input.description}`)
     .digest("hex")
 }
 

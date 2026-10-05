@@ -7,6 +7,8 @@ export const PLANNED_SOURCES: SourceAdapter[] = [
   { id: "ashby", phase: 2, label: "Ashby" },
   { id: "lever", phase: 2, label: "Lever" },
   { id: "yc", phase: 2, label: "YC Work at a Startup" },
+  { id: "wellfound", phase: 2, label: "Wellfound" },
+  { id: "welcome_to_the_jungle", phase: 2, label: "Welcome to the Jungle" },
   { id: "generic-career-page", phase: 3, label: "Generic career page" },
   { id: "linkedin", phase: 4, label: "LinkedIn" },
 ]

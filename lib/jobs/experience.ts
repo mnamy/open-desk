@@ -242,7 +242,12 @@ function isHardReject(hit: Hit): boolean {
     return (hit.min ?? 0) >= 2
   }
   if (hit.yearKind === "plus") return (hit.min ?? 0) >= 2
-  if (hit.yearKind === "exact") return (hit.min ?? 0) >= 2
+  if (hit.yearKind === "exact") {
+    // "Minimum N" / "At least N" leave max empty and stay a hard reject from 2 up.
+    // A plain "2 years" is a visible stretch. "3 years" and above still reject.
+    if (hit.max == null) return (hit.min ?? 0) >= 2
+    return (hit.min ?? 0) >= 3
+  }
   return false
 }
 
@@ -251,6 +256,8 @@ function isStretch(hit: Hit): boolean {
     return true
   }
   if (hit.yearKind === "range" && hit.min === 1 && hit.max === 2) return true
+  if (hit.yearKind === "range" && hit.min === 1 && hit.max === 3) return true
+  if (hit.yearKind === "exact" && hit.max != null && (hit.min ?? 0) === 2) return true
   if (hit.yearKind === "approx" && (hit.min ?? 0) >= 2) return true
   if (hit.qualifier === "preferred" && (hit.min ?? 0) >= 2) return true
   return false
