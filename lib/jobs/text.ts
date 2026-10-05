@@ -36,6 +36,7 @@ export function plainText(value: string): string {
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&#?\w+;/g, " ")
+    .replace(/[*_#]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
 }

@@ -81,7 +81,7 @@ export function titleIsSenior(title: string): boolean {
   const text = title.toLowerCase()
   if (/\b(senior|sr\.?|staff|principal|director|vice president|vp|chief|leader)\b/.test(text)) return true
   if (/\bhead of\b/.test(text)) return true
-  if (/\b(tech lead|team lead|design lead|engineering lead|engineering manager|general manager|senior manager|sr\.? manager|tech lead manager)\b/.test(text)) {
+  if (/\b(tech lead|team lead|design lead|engineering lead|engineering manager|general manager|senior manager|sr\.? manager|tech lead manager|department manager)\b/.test(text)) {
     return true
   }
   if (/\b(tech|team|design|engineering|technical|product) lead\b/.test(text)) return true
@@ -148,10 +148,13 @@ function hardNegative(title: string, description: string): boolean {
   if (/\b(physician|surgeon|registered nurse|\bnurse\b|therapist|clinician|pharmacist|dentist|medical assistant|clinical research|laboratory|wet lab)\b/i.test(title)) {
     return true
   }
-  if (/\b(recruiter|recruiting|talent acquisition|\bsourcer\b)\b/i.test(title)) return true
+  if (/\b(recruiter|recruiting|talent acquisition|talent development|talent management|people development|\bsourcer\b)\b/i.test(title)) return true
   if (/\b(accountant|accounting|fp&a|financial analyst|controller|bookkeeper)\b/i.test(title)) return true
   if (/\b(counsel|attorney|lawyer|paralegal|\blegal\b)\b/i.test(title)) return true
   if (/\b(human resources|\bhr\b|people partner|people operations)\b/i.test(title)) return true
+  if (/\bnot (?:a |an )?(?:technical )?product (?:manager|owner|role)\b/i.test(`${title}\n${description}`)) return true
+  if (/\b(advocate|evangelist|deployment strategist|solutions consultants?)\b/i.test(title)) return true
+  if (/\bcustomer care\b/i.test(title) && !/\b(user research|ux research|voice of (?:the )?customer)\b/i.test(description)) return true
   if (/\b(supply chain|warehouse|merchant|merchandis)/i.test(title)) {
     return !/\b(product strategy|product management|user research)\b/i.test(description)
   }
@@ -169,6 +172,7 @@ function isSupportQueue(title: string, description: string): boolean {
 
 function notFullTime(title: string, description: string, employmentType?: string | null): boolean {
   if (employmentType && /\b(part[- ]time|contractor|contract|temporary|intern)\b/i.test(employmentType)) return true
+  if (/\b(part[- ]time|contractor|temporary|\d+\s*month contract|\bcontract\b)\b/i.test(title)) return true
   return /\b(part[- ]time (?:role|position)|contract (?:role|position)|temporary (?:role|position))\b/i.test(`${title}\n${description}`)
 }
 
@@ -216,6 +220,7 @@ export function roleTier(family: string, title: string, description: string): Ro
     const digital = /\b(digital|product|\bux\b|user experience|technology|innovation)\b/i.test(text)
     return digital ? 2 : 0
   }
+  if (family === "Marketing" || family === "Learning design") return 0
   if (family === "Program" || family === "Community" || family === "Implementation") return 3
   return 0
 }
@@ -291,7 +296,7 @@ export function assessEligibility(input: {
 
   const signals = TIER3_SIGNALS.test(input.description)
   const adjacent = adjacentCount(input.description)
-  if (tier === 0 && adjacent >= 3) {
+  if (originalFamily === "Other" && tier === 0 && adjacent >= 3) {
     family = "Adjacent"
     tier = 2
   }

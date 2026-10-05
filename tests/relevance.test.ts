@@ -210,6 +210,13 @@ describe("hard rejects stay out of the working feeds", () => {
     expect(three.exclusionReason).toBe("experience")
   })
 
+  it("does not let company boilerplate keep marketing titles", () => {
+    const boilerplate = "Talk to users, run user research, prototype the product, and launch the product with the product team."
+    expect(judged("Product Marketing Associate", boilerplate).feedBucket).toBe("excluded")
+    expect(judged("Brand Strategy Associate", boilerplate).feedBucket).toBe("excluded")
+    expect(judged("Social Media Manager", boilerplate).feedBucket).toBe("excluded")
+  })
+
   it("keeps a weird startup title when the work is product-heavy", () => {
     const ranger = judged(
       "Zero to One Ranger",

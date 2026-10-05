@@ -10,6 +10,10 @@ const TITLE_RULES: { family: string; re: RegExp }[] = [
     re: /\b(account executives?|sales engineers?|enterprise sales|sales representatives?|sales associates?|sales development(?:\s+representatives?)?|business development representatives?|\bsdr\b|\bbdr\b|sales operations|revenue operations|account managers?)\b/i,
   },
   {
+    family: "Marketing",
+    re: /\b(product marketing|brand strateg(?:y|ists?)|brand marketing|growth marketing|social media|content marketing)\b/i,
+  },
+  {
     family: "Data science",
     re: /\b(data scientists?|data science|applied scientists?|research scientists?)\b/i,
   },
@@ -18,8 +22,12 @@ const TITLE_RULES: { family: string; re: RegExp }[] = [
     re: /\b(software engineers?|software developers?|backend engineers?|back-end engineers?|frontend engineers?|front-end engineers?|full[\s-]?stack(?:\s+engineers?)?|mobile engineers?|\bios engineers?|android engineers?|machine learning engineers?|ml engineers?|ai engineers?|ai\/ml(?:\s+engineers?)?|data engineers?|infrastructure engineers?|platform engineers?|devops|dev ops|site reliability|\bsre\b|security engineers?|engineering managers?|engineering directors?|\bengineering\b|tech leads?|technical leads?|\bswe\b|engineers?|developers?)\b/i,
   },
   {
+    family: "Learning design",
+    re: /\b(learning experience|instructional designers?|curriculum designers?)\b/i,
+  },
+  {
     family: "Product design",
-    re: /\b(product designers?|ux designers?|ui designers?|ui\/ux|ux\/ui|experience designers?|interaction designers?|design systems)\b/i,
+    re: /\b(product designers?|ux designers?|ui designers?|ui\/ux|ux\/ui|interaction designers?|design systems)\b/i,
   },
   {
     family: "User research",
@@ -31,7 +39,7 @@ const TITLE_RULES: { family: string; re: RegExp }[] = [
   },
   {
     family: "Product",
-    re: /\b(product managers?|product management|associate product|product associates?|product operations|product ops|product strateg(?:y|ist)|product generalists?|product analysts?|product development|\bapm\b)\b/i,
+    re: /\b(product managers?|product management|associate product managers?|product associates?|product operations|product ops|product strateg(?:y|ist)|product generalists?|product analysts?|product development|\bapm\b)\b/i,
   },
   {
     family: "Founder's office",
