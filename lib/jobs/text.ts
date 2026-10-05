@@ -28,6 +28,18 @@ const STOPWORDS = new Set([
   "its",
 ])
 
+export function plainText(value: string): string {
+  return value
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&#?\w+;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
 export function normalizeCompanyName(name: string): string {
   return name
     .toLowerCase()

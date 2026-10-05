@@ -20,7 +20,8 @@ describe("sample pipeline", () => {
     expect(lumen?.stretchReason.toLowerCase()).toContain("experimentation tools")
 
     const seniorTitle = byTitle("Kindred Social", "Senior Product Manager")
-    expect(seniorTitle?.feedBucket).toBe("main")
+    expect(seniorTitle?.feedBucket).toBe("excluded")
+    expect(seniorTitle?.exclusionReason).toBe("seniority")
     expect(seniorTitle?.experienceLabel).toBe("0–1 years")
 
     expect(byTitle("Northshore Health", "Customer Experience Associate")?.workArrangement).toBe("unclear")
@@ -30,7 +31,7 @@ describe("sample pipeline", () => {
     expect(byTitle("Barton Supply", "Business Operations Associate")?.feedBucket).toBe("stretch")
     expect(byTitle("Harborlight", "UX Researcher")?.feedBucket).toBe("stretch")
     expect(byTitle("Kindred Social", "Growth Strategy Analyst")?.feedBucket).toBe("stretch")
-    expect(byTitle("Fieldnote", "Product Strategy Associate")?.qualificationRisk).toBe("HIGH")
+    expect(byTitle("Fieldnote", "Product Strategy Associate")?.qualificationRisk).toBe("MEDIUM")
     expect(byTitle("Fieldnote", "Product Strategy Associate")?.opportunityFit).toBeGreaterThanOrEqual(75)
 
     expect(byTitle("Wayline", "Product Associate")?.exclusionReason).toBe("remote")
@@ -42,8 +43,9 @@ describe("sample pipeline", () => {
     expect(byTitle("Cinder Metals", "Design Engineer")?.exclusionReason).toBe("relevance")
 
     const sdr = byTitle("Relay Outreach", "Sales Development Representative")
-    expect(sdr?.feedBucket).toBe("main")
-    expect(sdr?.opportunityFit).toBeLessThan(60)
+    expect(sdr?.feedBucket).toBe("excluded")
+    expect(sdr?.exclusionReason).toBe("sales")
+    expect(sdr?.opportunityFit).toBeNull()
 
     const undated = byTitle("Fieldnote", "Strategy & Operations Associate")
     expect(undated?.postedAt).toBeNull()
