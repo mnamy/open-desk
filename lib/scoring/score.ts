@@ -1,15 +1,15 @@
 import { createHash } from "node:crypto"
 import type { Classification, ClassificationInput, QualificationRisk } from "@/lib/llm/types"
+import { plainText } from "@/lib/jobs/text"
 import { arrangementLabel } from "@/lib/jobs/work-arrangement"
 
 export const FIT_WEIGHTS = {
-  responsibilities: 0.3,
-  industry: 0.2,
-  product: 0.15,
-  startup: 0.15,
-  ownership: 0.1,
-  title: 0.05,
-  skills: 0.05,
+  role: 0.32,
+  level: 0.18,
+  product: 0.18,
+  ownership: 0.12,
+  startup: 0.12,
+  industry: 0.08,
 } as const
 
 const INDUSTRY_BOOSTS: { re: RegExp; label: string }[] = [
@@ -34,7 +34,7 @@ function clamp(value: number): number {
 
 export function contentHash(input: Pick<ClassificationInput, "companyName" | "title" | "description">): string {
   return createHash("sha256")
-    .update(`${input.companyName}\n${input.title}\n${input.description}`)
+    .update(`relevance-v3\n${input.companyName}\n${input.title}\n${input.description}`)
     .digest("hex")
 }
 
@@ -60,65 +60,63 @@ function salesHeavy(text: string): boolean {
   return /\b(sdr|bdr|quota|cold email|cold call|outbound meetings|sales development|book \d+ outbound)\b/i.test(text)
 }
 
-export function classifyDeterministic(input: ClassificationInput): Classification {
-  const text = `${input.title}\n${input.description}`
-  const duty = dutyLine(input.description)
-  const dutyText = duty ?? input.description
-  const sales = salesHeavy(text)
-  const admin = /\b(calendar management|status reports?|scheduling meetings)\b/i.test(text)
+function roleScore(tier: ClassificationInput["roleTier"]): number {
+  if (tier === 1) return 96
+  if (tier === 2) return 80
+  if (tier === 3) return 58
+  return 12
+}
 
-  let responsibilities = 38
-  const themes: RegExp[] = [
-    /talk|interview|listen/,
-    /writ|brief|requirement/,
-    /launch|ship/,
-    /experiment/,
-    /prototype|design/,
-    /analy/,
-    /onboarding|activation|retention/,
-  ]
-  let themeHits = 0
-  for (const theme of themes) {
-    if (theme.test(dutyText)) {
-      responsibilities += theme === themes[0] ? 14 : 12
-      themeHits += 1
-    }
+function levelScore(signal: ClassificationInput["levelSignal"]): number {
+  if (signal === "entry") return 94
+  if (signal === "modest") return 66
+  return 40
+}
+
+function productScore(text: string): number {
+  if (/\b(user research|ux research|prototype|prototyp|product requirement|what to build|roadmap|experiment|product strategy|interaction design|user experience)\b/i.test(text)) {
+    return 92
   }
-  if (sales) responsibilities -= 58
-  if (admin && themeHits < 2) responsibilities -= 28
-  responsibilities = clamp(responsibilities)
+  if (/\b(product|feature|design|research|insight)\b/i.test(text)) return 68
+  return 28
+}
 
+function ownershipScore(text: string): number {
+  if (/\b(end to end|0 to 1|0→1|zero to one|cross-functional|own (?:this|a slice|the))\b/i.test(text)) return 90
+  if (/\b(product team|partner with)\b/i.test(text)) return 70
+  return 38
+}
+
+export function classifyDeterministic(input: ClassificationInput): Classification {
+  const text = plainText(`${input.title}\n${input.description}`)
+  const duty = dutyLine(input.description)
+  const sales = salesHeavy(text)
+  const seniorTitle = /\b(senior|sr\.?|staff|principal|director|head of|vice president|\bvp\b|chief|tech lead|engineering manager)\b/i.test(input.title)
   const industryLabel = industryMatch(input)
-  const industry = industryLabel ? 92 : input.industry ? 48 : 55
+  const industry = industryLabel ? 90 : 42
+  const startup = /early-stage|early stage|\bseed\b|series a|small team|startup|founding/i.test(text) ? 86 : 46
+  const product = productScore(text)
+  const ownership = ownershipScore(text)
 
-  const product = /requirement|roadmap|what (?:should|to) build|product decision|feature/.test(text.toLowerCase())
-    ? 92
-    : /\bproduct\b/i.test(text)
-      ? 74
-      : 36
-
-  const startup = /early-stage|early stage|\bseed\b|series a|small team|startup|founding/i.test(text) ? 90 : 56
-
-  const ownership = /own (?:this|a slice|the)|end to end|0 to 1|0→1|zero to one/i.test(text) ? 90 : 44
-
-  const title = sales ? 8 : input.roleFamily === "Other" ? 40 : 90
-
-  const skills = 80
-
-  const opportunityFit = clamp(
-    FIT_WEIGHTS.responsibilities * responsibilities +
-      FIT_WEIGHTS.industry * industry +
+  let opportunityFit = clamp(
+    FIT_WEIGHTS.role * roleScore(input.roleTier) +
+      FIT_WEIGHTS.level * levelScore(input.levelSignal) +
       FIT_WEIGHTS.product * product +
-      FIT_WEIGHTS.startup * startup +
       FIT_WEIGHTS.ownership * ownership +
-      FIT_WEIGHTS.title * title +
-      FIT_WEIGHTS.skills * skills,
+      FIT_WEIGHTS.industry * industry +
+      FIT_WEIGHTS.startup * startup,
   )
+  if (input.roleTier === 3 && product < 90) opportunityFit = Math.min(opportunityFit, 72)
+  if (input.roleTier === 0 || sales || seniorTitle) opportunityFit = Math.min(opportunityFit, 24)
+  if (/\b(accountant|attorney|recruiter|registered nurse|supply chain|merchandis)/i.test(input.title)) {
+    opportunityFit = Math.min(opportunityFit, 20)
+  }
 
   const tool = preferredTool(input.description)
   let qualificationRisk: QualificationRisk = "LOW"
-  if (input.experienceBucket === "stretch" || sales) qualificationRisk = "HIGH"
+  if (input.levelSignal === "high" || seniorTitle || sales) qualificationRisk = "HIGH"
   else if (
+    input.levelSignal === "modest" ||
     tool ||
     input.experienceLabel === "1 year" ||
     input.experienceLabel === "1+ year" ||
@@ -133,7 +131,7 @@ export function classifyDeterministic(input: ClassificationInput): Classificatio
     `${input.experienceLabel} ${arrangement} role at ${where}.`,
   ]
   if (duty) sentences.push(`Day to day, ${duty.charAt(0).toLowerCase()}${duty.slice(1)}.`)
-  if (industryLabel) sentences.push(`${industryLabel} is a close industry match.`)
+  if (industryLabel) sentences.push(`The company sits in ${industryLabel}.`)
   if (/early-stage|early stage|\bseed\b|small team/i.test(text)) {
     sentences.push("The team is early-stage, so the work is broad.")
   }
@@ -143,9 +141,15 @@ export function classifyDeterministic(input: ClassificationInput): Classificatio
 
   const stretchBits: string[] = []
   if (input.experienceBucket === "stretch") {
-    stretchBits.push(
-      `${input.companyName} asks for ${input.experienceLabel.toLowerCase()}, which is past a genuine 0–1 year role, so it stays in Stretch.`,
-    )
+    if (input.levelSignal === "high" && /no stated experience/i.test(input.experienceLabel)) {
+      stretchBits.push(
+        `${input.companyName} does not state a year requirement, and the title is not clearly early-career, so it stays in Stretch.`,
+      )
+    } else {
+      stretchBits.push(
+        `${input.companyName} asks for ${input.experienceLabel.toLowerCase()}, which is past a genuine 0–1 year role, so it stays in Stretch.`,
+      )
+    }
   }
   if (tool) {
     stretchBits.push(`They prefer ${tool.charAt(0).toLowerCase()}${tool.slice(1)}.`)

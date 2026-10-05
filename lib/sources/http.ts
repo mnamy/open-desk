@@ -6,6 +6,7 @@ export interface TextCache {
 export interface HttpClient {
   getJson<T>(url: string, timeoutMs?: number): Promise<T>
   getText(url: string, timeoutMs?: number): Promise<string>
+  postJson?<T>(url: string, body: unknown, headers?: Record<string, string>, timeoutMs?: number): Promise<T>
 }
 
 const BROWSER_UA =
@@ -25,7 +26,7 @@ export function createHttpClient(options?: {
       const cached = await cache.get(url)
       if (cached !== null) return cached
     }
-    const browser = /workatastartup\.com|ycombinator\.com/i.test(url)
+    const browser = /workatastartup\.com|ycombinator\.com|wellfound\.com|welcometothejungle\.com|algolia\.net/i.test(url)
     const response = await fetchImpl(url, {
       headers: {
         Accept: "text/html,application/json;q=0.9,*/*;q=0.8",
@@ -48,6 +49,24 @@ export function createHttpClient(options?: {
     getText,
     async getJson<T>(url: string, timeout = timeoutMs): Promise<T> {
       return JSON.parse(await getText(url, timeout)) as T
+    },
+    async postJson<T>(url: string, body: unknown, headers?: Record<string, string>, timeout = timeoutMs): Promise<T> {
+      const response = await fetchImpl(url, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "User-Agent": BROWSER_UA,
+          ...headers,
+        },
+        body: JSON.stringify(body),
+        redirect: "follow",
+        signal: AbortSignal.timeout(timeout),
+      })
+      if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}`.trim())
+      }
+      return JSON.parse(await response.text()) as T
     },
   }
 }

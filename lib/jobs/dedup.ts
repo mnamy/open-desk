@@ -46,6 +46,11 @@ export function applicationPreference(source: string, url: string): number {
   const src = source.toLowerCase()
   if (src === "linkedin" || value.includes("linkedin.com")) return 30
   if (ATS_HOSTS.some((host) => value.includes(host))) return 10
+  const marketplace =
+    src === "wellfound" ||
+    src === "welcome_to_the_jungle" ||
+    ["wellfound.com", "angel.co", "welcometothejungle.com", "otta.com"].some((host) => value.includes(host))
+  if (marketplace) return 22
   const directory = value.includes("workatastartup.com") || value.includes("ycombinator.com")
   if (!directory && (src === "career_page" || /\/(careers|jobs|openings|open-roles)\b/.test(value))) return 10
   if (src === "yc" || directory) return 20

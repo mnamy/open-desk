@@ -1,17 +1,19 @@
+import { assessEligibility, type EligibilityDecision, type ExclusionReason } from "@/lib/jobs/eligibility"
 import { parseExperience, type ExperienceParse } from "@/lib/jobs/experience"
 import { normalizeCity, type AllowedCity } from "@/lib/jobs/location"
-import { isWrongProfession } from "@/lib/jobs/relevance"
-import { inferRoleFamily } from "@/lib/jobs/role-family"
 import { parseWorkArrangement, type WorkArrangement } from "@/lib/jobs/work-arrangement"
 
+export type { ExclusionReason }
 export type FeedBucket = "main" | "stretch" | "excluded"
-export type ExclusionReason = "location" | "remote" | "experience" | "relevance"
 
 export interface HardFilterResult {
   city: AllowedCity | null
   workArrangement: WorkArrangement
   experience: ExperienceParse
   roleFamily: string
+  tier: EligibilityDecision["tier"]
+  levelSignal: EligibilityDecision["levelSignal"]
+  tags: EligibilityDecision["tags"]
   feedBucket: FeedBucket
   exclusionReason: ExclusionReason | null
 }
@@ -21,6 +23,7 @@ export function evaluateHardFilters(input: {
   description: string
   locationRaw: string
   arrangementRaw?: string | null
+  employmentType?: string | null
 }): HardFilterResult {
   const city = normalizeCity(input.locationRaw)
   const workArrangement = parseWorkArrangement({
@@ -29,10 +32,15 @@ export function evaluateHardFilters(input: {
     description: input.description,
   })
   const experience = parseExperience({ title: input.title, description: input.description })
-  const roleFamily = inferRoleFamily(input.title, input.description)
+  const decision = assessEligibility({
+    title: input.title,
+    description: input.description,
+    employmentType: input.employmentType,
+    experience,
+  })
 
-  let feedBucket: FeedBucket = "main"
-  let exclusionReason: ExclusionReason | null = null
+  let feedBucket: FeedBucket = decision.feedBucket
+  let exclusionReason = decision.exclusionReason
 
   if (!city) {
     feedBucket = "excluded"
@@ -40,15 +48,17 @@ export function evaluateHardFilters(input: {
   } else if (workArrangement === "remote") {
     feedBucket = "excluded"
     exclusionReason = "remote"
-  } else if (experience.bucket === "reject") {
-    feedBucket = "excluded"
-    exclusionReason = "experience"
-  } else if (isWrongProfession(input.title, input.description)) {
-    feedBucket = "excluded"
-    exclusionReason = "relevance"
-  } else if (experience.bucket === "stretch") {
-    feedBucket = "stretch"
   }
 
-  return { city, workArrangement, experience, roleFamily, feedBucket, exclusionReason }
+  return {
+    city,
+    workArrangement,
+    experience,
+    roleFamily: decision.roleFamily,
+    tier: decision.tier,
+    levelSignal: decision.levelSignal,
+    tags: decision.tags,
+    feedBucket,
+    exclusionReason,
+  }
 }

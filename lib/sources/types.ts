@@ -1,4 +1,13 @@
-export const SOURCE_IDS = ["linkedin", "greenhouse", "ashby", "lever", "yc", "career_page"] as const
+export const SOURCE_IDS = [
+  "linkedin",
+  "greenhouse",
+  "ashby",
+  "lever",
+  "yc",
+  "career_page",
+  "wellfound",
+  "welcome_to_the_jungle",
+] as const
 
 export type SourceId = (typeof SOURCE_IDS)[number]
 
