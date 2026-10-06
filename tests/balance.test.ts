@@ -117,6 +117,36 @@ describe("growth and operations stay selective", () => {
       "0–1 years of experience. Day to day: logistics coordination and data entry for the warehouse.",
     )
     expect(logistics.evaluation.feedBucket).toBe("excluded")
+
+    const store = judged(
+      "Operations Associate",
+      "0–1 years of experience. Day to day: process inbound inventory shipments and complete shipment processing for the store.",
+    )
+    expect(store.evaluation.feedBucket).toBe("excluded")
+    const retail = judged(
+      "Seasonal Retail Sales and Operations Associates",
+      "0–1 years of experience. Day to day: work the sales floor, fitting rooms, and stockroom.",
+    )
+    expect(retail.evaluation.feedBucket).toBe("excluded")
+    const architecture = judged(
+      "Retail Experience Design Specialist",
+      "0–1 years of experience. Day to day: use architectural training to design physical environments and retail spaces with a cross-functional team.",
+    )
+    expect(architecture.evaluation.feedBucket).toBe("excluded")
+  })
+
+  it("keeps a strategic program and leaves a machine-learning delivery program out", () => {
+    const strategic = judged(
+      "Program Associate",
+      "0–1 years of experience. Day to day: run a cross-functional launch with the product team and own the experiment plan. Early-stage startup.",
+    )
+    expect(strategic.evaluation.feedBucket).toBe("main")
+    expect(strategic.evaluation.tier).toBe(1)
+    const technical = judged(
+      "Program Manager",
+      "0–1 years of experience. You will translate machine learning and data science work into delivery plans for platform engineering.",
+    )
+    expect(technical.evaluation.feedBucket).toBe("excluded")
   })
 
   it("still rejects senior, engineering, and data science titles", () => {

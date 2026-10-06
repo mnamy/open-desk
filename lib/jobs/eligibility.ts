@@ -93,7 +93,16 @@ const GOOD_OPS_TITLE =
   /\b(strategy|biz\s?ops|business operations|product operations|product ops|strategic operations|startup operations|founding operations)\b/i
 
 const BAD_OPS =
-  /\b(scheduling|calendar management|logistics coordination|data entry|expense reports?|back-office|back office|invoice processing|status reports?)\b/i
+  /\b(scheduling|calendar management|logistics coordination|data entry|expense reports?|back-office|back office|invoice processing|status reports?|stockroom|sales floor|fitting rooms?|inbound inventory|in-store inventory|store inventory|shipment processing)\b/i
+
+const STORE_WORK =
+  /\b(stockroom|sales floor|fitting rooms?|inbound inventory|in-store inventory|store inventory|shipment processing|retail sales)\b/i
+
+const STORE_EXCEPTION =
+  /\b(user research|product strategy|experiment|analytics|what to build|business operations|strategic planning)\b/i
+
+const TECHNICAL_PROGRAM =
+  /\b(machine learning|data science|platform engineering|software engineering|model training)\b/i
 
 const FOUNDER_SIGNAL =
   /\b(product|strategy|roadmap|user|research|launch|what to build|ownership|cross-functional|experiment|analytics|decision|0\s*(?:→|to)\s*1|generalist|initiative)\b/i
@@ -165,6 +174,7 @@ export function isSalesRole(title: string, description: string, family: string):
     return true
   }
   if (BAD_GROWTH_TITLE.test(title)) return true
+  if (/\b(retail sales|sales floor)\b/i.test(title)) return true
   const text = `${title}\n${description}`
   if (SALES_FUNNEL.test(text)) return true
   if (/\bbusiness development\b/i.test(title)) {
@@ -192,6 +202,13 @@ function hardNegative(title: string, description: string): boolean {
   return false
 }
 
+function storeLogistics(title: string, description: string): boolean {
+  const text = `${title}\n${description}`
+  const store = STORE_WORK.test(text) && !STORE_EXCEPTION.test(description)
+  const physicalRetail = /\b(architectural|physical environments|store design)\b/i.test(text) && !/\b(user research|ux research|what to build|product strategy)\b/i.test(description)
+  return store || physicalRetail
+}
+
 function isSupportQueue(title: string, description: string): boolean {
   const supportTitle = /\b(customer (?:experience|support|service) (?:representative|agent|advisor|associate|specialist)|customer support|customer service)\b/i.test(title)
   if (!supportTitle) return false
@@ -203,7 +220,7 @@ function isSupportQueue(title: string, description: string): boolean {
 
 function notFullTime(title: string, description: string, employmentType?: string | null): boolean {
   if (employmentType && /\b(part[- ]time|contractor|contract|temporary|intern)\b/i.test(employmentType)) return true
-  if (/\b(part[- ]time|contractor|temporary|\d+\s*month contract|\bcontract\b)\b/i.test(title)) return true
+  if (/\b(part[- ]time|contractor|temporary|seasonal|\d+\s*month contract|\bcontract\b)\b/i.test(title)) return true
   return /\b(part[- ]time (?:role|position)|contract (?:role|position)|temporary (?:role|position))\b/i.test(`${title}\n${description}`)
 }
 
@@ -259,6 +276,7 @@ export function roleTier(family: string, title: string, description: string): Ro
   if (family === "Marketing" || family === "Learning design") return 0
   if (family === "Program") {
     if (pureAdmin(description)) return 0
+    if (TECHNICAL_PROGRAM.test(description) && !/\b(user research|product strategy|what to build|business operations|growth strategy)\b/i.test(description)) return 0
     if (PROGRAM_SIGNAL.test(text)) return 1
     return 3
   }
@@ -322,7 +340,7 @@ export function assessEligibility(input: {
   })
 
   if (tags.internship) return reject("internship")
-  if (isSupportQueue(input.title, input.description)) return reject("relevance")
+  if (isSupportQueue(input.title, input.description) || storeLogistics(input.title, input.description)) return reject("relevance")
   if (tags.seniority) return reject("seniority")
   if (isWrongProfession(input.title, input.description)) return reject("relevance")
   if (tags.engineering) return reject("engineering")

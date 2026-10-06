@@ -60,7 +60,7 @@ const TITLE_RULES: { family: string; re: RegExp }[] = [
   },
   {
     family: "Program",
-    re: /\b(program managers?|programme managers?|project managers?|project coordinators?|program management|project management|localization program)\b/i,
+    re: /\b(program managers?|programme managers?|project managers?|project coordinators?|program management|project management|localization program|program associates?|programme associates?)\b/i,
   },
   { family: "Consulting", re: /\b(consultants?|consulting)\b/i },
   { family: "Community", re: /\bcommunity\b/i },
