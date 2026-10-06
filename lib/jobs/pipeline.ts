@@ -3,14 +3,16 @@ import { dedupePostings, type SourcePosting } from "@/lib/jobs/dedup"
 import { evaluateHardFilters, type ExclusionReason, type FeedBucket } from "@/lib/jobs/evaluate"
 import type { Classification, ClassificationInput, JobClassifier } from "@/lib/llm/types"
 import { classifyDeterministic } from "@/lib/scoring/score"
+import { boardToken, detectAts } from "@/lib/sources/html"
 import type { RawPosting } from "@/lib/sources/types"
-import { normalizeCompanyName, normalizeTitle } from "@/lib/jobs/text"
+import { normalizeCompanyName, normalizeTitle, normalizeUrl, tokens } from "@/lib/jobs/text"
 
 export interface ProcessedSource {
   source: string
   sourceUrl: string
   applicationUrl: string
   externalId: string | null
+  atsProvider: string | null
 }
 
 export interface ProcessedJob {
@@ -56,14 +58,32 @@ function fingerprintFor(parts: {
   title: string
   city: string | null
   description: string
+  applicationUrl: string
+  atsProvider: string | null
+  externalId: string | null
 }): string {
+  if (parts.atsProvider && parts.externalId) {
+    return createHash("sha256").update(`ats\n${parts.atsProvider}\n${parts.externalId}`).digest("hex")
+  }
+  const url = normalizeUrl(parts.applicationUrl)
+  if (url) return createHash("sha256").update(`url\n${url}`).digest("hex")
+  const signature = [...tokens(parts.description)].sort().join(" ")
   const payload = [
+    "role",
     normalizeCompanyName(parts.companyName),
     normalizeTitle(parts.title),
     parts.city ?? "",
-    parts.description.toLowerCase().replace(/\s+/g, " ").trim(),
+    signature,
   ].join("\n")
   return createHash("sha256").update(payload).digest("hex")
+}
+
+function boardFrom(raw: RawPosting): { provider: string | null; identifier: string | null } {
+  const detected = detectAts(raw.applicationUrl) ?? detectAts(raw.sourceUrl) ?? detectAts(raw.careersUrl ?? "")
+  return {
+    provider: raw.atsProvider ?? detected?.provider ?? null,
+    identifier: boardToken(raw.atsIdentifier) ?? detected?.identifier ?? null,
+  }
 }
 
 function postedAtFrom(daysAgo: number | null, now: Date): Date | null {
@@ -83,11 +103,12 @@ function blankFrom(raw: RawPosting): {
   locationRaw: string
   arrangementRaw?: string
 } {
+  const board = boardFrom(raw)
   return {
     companyWebsite: raw.companyWebsite ?? null,
     careersUrl: raw.careersUrl ?? null,
-    atsProvider: raw.atsProvider ?? null,
-    atsIdentifier: raw.externalId ?? null,
+    atsProvider: board.provider,
+    atsIdentifier: board.identifier,
     industry: raw.industry ?? null,
     discoveredFrom: raw.discoveredFrom ?? "sample import",
     employmentType: raw.employmentType ?? "Full-time",
@@ -123,7 +144,7 @@ export async function processPostings(
         sourceUrl: raw.sourceUrl,
         applicationUrl: raw.applicationUrl,
         externalId: raw.externalId ?? null,
-        atsProvider: raw.atsProvider ?? null,
+        atsProvider: boardFrom(raw).provider,
       }
       return posting
     }),
@@ -184,12 +205,17 @@ export async function processPostings(
       classification = classify ? await classify(input) : classifyDeterministic(input)
     }
 
+    const atsPosting = group.postings.find((posting) => posting.atsProvider && posting.externalId)
+    const board = boardFrom(raw)
     jobs.push({
       fingerprint: fingerprintFor({
         companyName: raw.companyName,
         title: raw.title,
         city: evaluation.city,
         description: raw.description,
+        applicationUrl: group.applicationUrl,
+        atsProvider: atsPosting?.atsProvider ?? board.provider,
+        externalId: atsPosting?.externalId ?? raw.externalId ?? null,
       }),
       companyName: raw.companyName,
       normalizedCompany: normalizeCompanyName(raw.companyName),
@@ -229,6 +255,7 @@ export async function processPostings(
         sourceUrl: posting.sourceUrl,
         applicationUrl: posting.applicationUrl,
         externalId: posting.externalId ?? null,
+        atsProvider: posting.atsProvider ?? null,
       })),
     })
   }

@@ -83,15 +83,21 @@ export function descriptionSimilarity(a: string, b: string): number {
   return jaccard(tokens(a), tokens(b))
 }
 
+const TRACKING_PARAM = /^(utm_|mc_|fbclid$|gclid$|ref$|trk$|source$|gh_src$|gh_jid$|lever-source$|lever-origin$|_ga$)/i
+
 export function normalizeUrl(url: string): string {
   try {
     const parsed = new URL(url)
     parsed.hash = ""
+    parsed.hostname = parsed.hostname.toLowerCase()
     for (const key of [...parsed.searchParams.keys()]) {
-      if (key.startsWith("utm_") || key === "ref" || key === "trk") {
-        parsed.searchParams.delete(key)
-      }
+      if (TRACKING_PARAM.test(key)) parsed.searchParams.delete(key)
     }
+    const next = new URLSearchParams()
+    for (const key of [...parsed.searchParams.keys()].sort()) {
+      for (const value of parsed.searchParams.getAll(key)) next.append(key, value)
+    }
+    parsed.search = next.toString()
     return parsed.toString().replace(/\/$/, "")
   } catch {
     return url.trim().toLowerCase()

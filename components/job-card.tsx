@@ -31,6 +31,7 @@ export function JobCard({ job }: { job: CardModel }) {
             </Badge>
           ) : null}
           {job.isNew ? <Badge variant="secondary">New</Badge> : null}
+          {job.unavailable ? <Badge variant="outline">Unavailable</Badge> : null}
           <Badge variant="outline">{job.sample ? "Sample" : "Live"}</Badge>
           {job.sourceBadges.map((source) => (
             <Badge key={source} variant="secondary">

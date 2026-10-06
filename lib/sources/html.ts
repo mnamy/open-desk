@@ -38,6 +38,14 @@ const ATS_PATTERNS: { provider: "greenhouse" | "ashby" | "lever"; re: RegExp }[]
 
 const ATS_TOKEN_BLOCKLIST = new Set(["embed", "jobs", "job_board", "v0", "v1", "boards", "postings", "posting-api"])
 
+/** Board slugs only. Numeric Greenhouse job ids and Ashby UUIDs are not board tokens. */
+export function boardToken(value: string | null | undefined): string | null {
+  if (!value) return null
+  const token = value.trim().toLowerCase()
+  if (!/^[a-z][a-z0-9_-]{1,80}$/.test(token)) return null
+  return token
+}
+
 export function detectAts(htmlOrUrl: string): { provider: "greenhouse" | "ashby" | "lever"; identifier: string } | null {
   for (const pattern of ATS_PATTERNS) {
     const match = htmlOrUrl.match(pattern.re)

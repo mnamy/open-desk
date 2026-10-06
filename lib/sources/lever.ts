@@ -57,6 +57,7 @@ export function leverJobsToPostings(jobs: LeverJob[], company: LeverBoardCompany
       applicationUrl,
       externalId: job.id,
       atsProvider: "lever",
+      atsIdentifier: company.atsIdentifier,
       companyName: company.name,
       companyWebsite: company.website,
       careersUrl: `https://jobs.lever.co/${company.atsIdentifier}`,

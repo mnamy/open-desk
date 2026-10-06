@@ -10,10 +10,35 @@ import { sanitizeDbError } from "@/lib/db/postgres-url.mjs"
 import { latestSearchRun, listDeskJobs, type DeskJob } from "@/lib/db/repository"
 import { FEEDS, jobInFeed, type FeedId } from "@/lib/jobs/feeds"
 import { emptyCopy, filterOptions, hasActiveFilters, parseFeed, runSummary, toCard, visibleJobs, type DeskFilters } from "@/lib/jobs/view"
+import { summarizeWarnings } from "@/lib/sources/warnings"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 export const maxDuration = 60
+
+function SourceWarnings({ warnings }: { warnings: string[] }) {
+  const summary = summarizeWarnings(warnings)
+  return (
+    <details className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-950">
+      <summary className="cursor-pointer font-medium">{summary.headline}</summary>
+      <ul className="mt-2 list-disc pl-5">
+        {summary.groups.map((group) => (
+          <li key={group.label}>
+            {group.label}: {group.count}
+          </li>
+        ))}
+      </ul>
+      <details className="mt-2">
+        <summary className="cursor-pointer text-muted-foreground">Technical details</summary>
+        <ul className="mt-1 max-h-48 list-disc overflow-auto pl-5 font-mono text-xs leading-5 text-muted-foreground">
+          {warnings.map((warning, index) => (
+            <li key={`${warning}-${index}`}>{warning}</li>
+          ))}
+        </ul>
+      </details>
+    </details>
+  )
+}
 
 function one(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value
@@ -93,12 +118,7 @@ export default async function Home({
       </header>
 
       <p className="text-sm leading-6 text-muted-foreground">{runSummary(run)}</p>
-      {run && run.warnings.length > 0 ? (
-        <p className="text-sm leading-6 text-amber-950">
-          {run.warnings.slice(0, 4).join(" · ")}
-          {run.warnings.length > 4 ? ` · ${run.warnings.length - 4} more source warnings.` : ""}
-        </p>
-      ) : null}
+      {run && run.warnings.length > 0 ? <SourceWarnings warnings={run.warnings} /> : null}
 
       <FeedNav feed={feed} counts={counts} query={query.toString()} />
 

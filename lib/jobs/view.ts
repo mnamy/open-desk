@@ -46,6 +46,7 @@ export interface CardModel {
   saved: boolean
   applied: boolean
   hidden: boolean
+  unavailable: boolean
 }
 
 export function parseFeed(value: string | undefined): FeedId {
@@ -126,6 +127,7 @@ export function toCard(job: DeskJob, now = new Date()): CardModel {
     saved: job.actions.includes("save"),
     applied: job.actions.includes("applied"),
     hidden: job.actions.includes("not_interested"),
+    unavailable: job.availability === "unavailable",
   }
 }
 
@@ -166,7 +168,7 @@ export function emptyCopy(feed: FeedId, filtered: boolean): { title: string; bod
     case "new":
       return {
         title: "No new roles",
-        body: "Nothing on the main feed was first seen in the latest search. Run search to check live sources for roles that were not here before.",
+        body: "Nothing on the main feed is being shown for the first time. Roles you have already seen stay in All.",
       }
     case "all":
       return {

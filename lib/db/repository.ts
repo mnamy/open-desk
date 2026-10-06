@@ -15,6 +15,7 @@ import {
   type CheckedCompany,
   type LiveCollection,
   type SearchCursor,
+  type StaleBoard,
 } from "@/lib/sources/live-search"
 import type { SeedCompany } from "@/data/company-seed"
 
@@ -49,6 +50,9 @@ export interface DeskJob {
   sample: boolean
   sources: DeskSource[]
   actions: string[]
+  firstSurfacedAt: Date | null
+  lastSeenAt: Date
+  availability: "active" | "unavailable"
 }
 
 export interface SearchRun {
@@ -99,8 +103,10 @@ function asNumber(value: number | string | null | undefined): number | null {
 export async function importLiveSearch(input: Database, now = new Date()): Promise<ImportSummary> {
   const db = asSql(input)
   const saved = await listSavedCompanies(db)
+  const disabled = await disabledBoardKeys(db)
   const collected = await collectLivePostings({
-    companies: mergeSeedCompanies(COMPANY_SEED, saved),
+    companies: withoutDisabledBoards(mergeSeedCompanies(COMPANY_SEED, saved), disabled),
+    disabledBoards: disabled,
     client: createHttpClient({ cache: sourceCache(db) }),
     now,
   })
@@ -165,9 +171,13 @@ export async function importPostings(
 
   summary.jobsNew = await db.transaction(async (tx) => {
     if (mode === "search") await tx.query("UPDATE jobs SET is_new = FALSE")
-    const inserted = await writeProcessed(tx, processed, now, { markNew: mode === "search" })
+    const inserted = await writeProcessed(tx, processed, now, { markNew: mode === "search", live: Boolean(live) })
     summary.jobsNew = inserted
-    if (live) await saveCheckedCompanies(tx, live.checkedCompanies, now)
+    if (live) {
+      await saveCheckedCompanies(tx, live.checkedCompanies, now)
+      await disableStaleBoards(tx, live.staleBoards ?? [])
+      await retireUnseen(tx, healthyNames(live.checkedCompanies), now)
+    }
     if (mode === "search") {
       const finished = new Date()
       await tx.query(
@@ -195,6 +205,7 @@ export async function importPostings(
           live ? "live" : "sample",
         ],
       )
+      logSourceWarnings(summary.warnings)
     }
     return inserted
   })
@@ -209,8 +220,12 @@ export async function continueLiveSearch(
   const now = options?.now ?? new Date()
   let run = await loadRunningSearch(db)
   if (!run) {
-    const companies = options?.companies ?? mergeSeedCompanies(COMPANY_SEED, await listSavedCompanies(db))
-    run = await startLiveSearch(db, initialCursor(companies), now)
+    const disabled = await disabledBoardKeys(db)
+    const companies = withoutDisabledBoards(
+      options?.companies ?? mergeSeedCompanies(COMPANY_SEED, await listSavedCompanies(db)),
+      disabled,
+    )
+    run = await startLiveSearch(db, initialCursor(companies, disabled), now)
   }
   const client = options?.client ?? createHttpClient({ cache: sourceCache(db) })
   const slice = await collectNextSlice({
@@ -255,10 +270,15 @@ export async function continueLiveSearch(
   )
   const done = slice.cursor.phase === "done"
   await db.transaction(async (tx) => {
-    await writeProcessed(tx, processed, now, { markNew: true, runId: run.id })
+    await writeProcessed(tx, processed, now, { markNew: true, runId: run.id, live: true })
     if (slice.collection.checkedCompanies.length > 0) {
       await saveCheckedCompanies(tx, slice.collection.checkedCompanies, now)
     }
+    await disableStaleBoards(tx, slice.collection.staleBoards)
+    const healthy = [
+      ...new Set([...(run.cursor.healthyCompanies ?? []), ...healthyNames(slice.collection.checkedCompanies)]),
+    ]
+    if (done) await retireUnseen(tx, healthy, run.startedAt)
     const counts = await tx.query<{
       seen: number
       main: number
@@ -307,7 +327,7 @@ export async function continueLiveSearch(
       WHERE id = $1`,
       [
         run.id,
-        JSON.stringify(slice.cursor),
+        JSON.stringify({ ...slice.cursor, healthyCompanies: healthy }),
         companiesChecked,
         postingsFetched,
         Number(tally?.seen ?? 0),
@@ -324,6 +344,7 @@ export async function continueLiveSearch(
         done ? new Date().toISOString() : null,
       ],
     )
+    if (done) logSourceWarnings(warnings)
   })
   const checked = run.companiesChecked + slice.collection.companiesChecked
   const fetched = run.postingsFetched + slice.collection.postings.length
@@ -354,12 +375,18 @@ async function startLiveSearch(db: Sql, cursor: SearchCursor, now: Date) {
       [id, now.toISOString(), JSON.stringify(cursor)],
     )
   })
-  return { id, cursor, companiesChecked: 0, postingsFetched: 0 }
+  return { id, cursor, companiesChecked: 0, postingsFetched: 0, startedAt: now }
 }
 
 async function loadRunningSearch(db: Sql) {
-  const result = await db.query<{ id: string; plan: string | null; companies_checked: number; postings_fetched: number }>(
-    `SELECT id, plan, companies_checked, postings_fetched
+  const result = await db.query<{
+    id: string
+    plan: string | null
+    companies_checked: number
+    postings_fetched: number
+    started_at: Date | string
+  }>(
+    `SELECT id, plan, companies_checked, postings_fetched, started_at
      FROM search_runs WHERE status = 'running' ORDER BY started_at DESC LIMIT 1`,
   )
   const row = result.rows[0]
@@ -372,6 +399,7 @@ async function loadRunningSearch(db: Sql) {
       cursor,
       companiesChecked: Number(row.companies_checked ?? 0),
       postingsFetched: Number(row.postings_fetched ?? 0),
+      startedAt: asDate(row.started_at) ?? new Date(),
     }
   } catch {
     return null
@@ -398,6 +426,9 @@ interface JobRow {
   stretch_reason: string | null
   feed_bucket: "main" | "stretch" | "excluded"
   is_new: boolean
+  first_surfaced_at: Date | string | null
+  last_seen_at: Date | string
+  availability: string | null
 }
 
 export async function listDeskJobs(input: Database): Promise<DeskJob[]> {
@@ -407,6 +438,7 @@ export async function listDeskJobs(input: Database): Promise<DeskJob[]> {
       j.id, j.title, j.role_family, j.normalized_city, j.work_arrangement, j.experience_label,
       j.posted_at, j.first_seen_at, j.application_url, j.source, j.opportunity_fit, j.qualification_risk,
       j.why_match, j.stretch_reason, j.feed_bucket, j.is_new,
+      j.first_surfaced_at, j.last_seen_at, j.availability,
       c.name AS company_name, c.industry, c.discovered_from
     FROM jobs j
     JOIN companies c ON c.id = j.company_id
@@ -436,6 +468,9 @@ export async function listDeskJobs(input: Database): Promise<DeskJob[]> {
     stretchReason: row.stretch_reason,
     feedBucket: row.feed_bucket,
     isNew: Boolean(row.is_new),
+    firstSurfacedAt: asDate(row.first_surfaced_at),
+    lastSeenAt: asDate(row.last_seen_at) ?? asDate(row.first_seen_at) ?? new Date(),
+    availability: (row.availability === "unavailable" ? "unavailable" : "active") as DeskJob["availability"],
     sample: row.discovered_from === "sample import",
     sources: sources.rows
       .filter((source) => source.job_id === row.id)
@@ -524,23 +559,28 @@ async function listSavedCompanies(db: Sql): Promise<SeedCompany[]> {
     industry: string | null
     ats_provider: string | null
     ats_identifier: string | null
+    ats_status: string | null
     discovered_from: string | null
   }>(
-    `SELECT name, website, careers_url, industry, ats_provider, ats_identifier, discovered_from
+    `SELECT name, website, careers_url, industry, ats_provider, ats_identifier, ats_status, discovered_from
      FROM companies
      WHERE discovered_from IS DISTINCT FROM 'sample import'`,
   )
-  return result.rows.map((row) => ({
-    name: row.name,
-    website: row.website ?? undefined,
-    careersUrl: row.careers_url ?? undefined,
-    industry: row.industry ?? undefined,
-    atsProvider:
-      row.ats_provider === "greenhouse" || row.ats_provider === "ashby" || row.ats_provider === "lever"
+  return result.rows.map((row) => {
+    const disabled = row.ats_status === "disabled"
+    const provider =
+      !disabled && (row.ats_provider === "greenhouse" || row.ats_provider === "ashby" || row.ats_provider === "lever")
         ? row.ats_provider
-        : undefined,
-    atsIdentifier: row.ats_identifier ?? undefined,
-  }))
+        : undefined
+    return {
+      name: row.name,
+      website: row.website ?? undefined,
+      careersUrl: row.careers_url ?? undefined,
+      industry: row.industry ?? undefined,
+      atsProvider: provider,
+      atsIdentifier: provider ? (row.ats_identifier ?? undefined) : undefined,
+    }
+  })
 }
 
 function mergeSeedCompanies(seed: SeedCompany[], saved: SeedCompany[]): SeedCompany[] {
@@ -567,15 +607,27 @@ function mergeSeedCompanies(seed: SeedCompany[], saved: SeedCompany[]): SeedComp
 
 async function saveCheckedCompanies(db: Sql, companies: CheckedCompany[], now: Date) {
   for (const company of companies) {
+    const stale = company.sourceHealth === "stale"
     await db.query(
       `INSERT INTO companies (
-        id, name, normalized_name, website, careers_url, ats_provider, ats_identifier, industry, discovered_from, last_checked_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        id, name, normalized_name, website, careers_url, ats_provider, ats_identifier, industry, discovered_from, last_checked_at, ats_status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       ON CONFLICT (normalized_name) DO UPDATE SET
         website = COALESCE(EXCLUDED.website, companies.website),
         careers_url = COALESCE(EXCLUDED.careers_url, companies.careers_url),
-        ats_provider = COALESCE(EXCLUDED.ats_provider, companies.ats_provider),
-        ats_identifier = COALESCE(EXCLUDED.ats_identifier, companies.ats_identifier),
+        ats_provider = CASE
+          WHEN EXCLUDED.ats_status = 'disabled' THEN NULL
+          ELSE COALESCE(EXCLUDED.ats_provider, companies.ats_provider)
+        END,
+        ats_identifier = CASE
+          WHEN EXCLUDED.ats_status = 'disabled' THEN NULL
+          ELSE COALESCE(EXCLUDED.ats_identifier, companies.ats_identifier)
+        END,
+        ats_status = CASE
+          WHEN EXCLUDED.ats_status = 'disabled' THEN 'disabled'
+          WHEN EXCLUDED.ats_provider IS NOT NULL THEN 'active'
+          ELSE companies.ats_status
+        END,
         industry = COALESCE(EXCLUDED.industry, companies.industry),
         discovered_from = CASE
           WHEN companies.discovered_from = 'sample import' THEN EXCLUDED.discovered_from
@@ -588,14 +640,91 @@ async function saveCheckedCompanies(db: Sql, companies: CheckedCompany[], now: D
         company.normalizedName,
         company.website ?? null,
         company.careersUrl ?? null,
-        company.atsProvider ?? null,
-        company.atsIdentifier ?? null,
+        stale ? null : (company.atsProvider ?? null),
+        stale ? null : (company.atsIdentifier ?? null),
         company.industry ?? null,
         company.discoveredFrom,
         now.toISOString(),
+        stale ? "disabled" : "active",
       ],
     )
   }
+}
+
+function healthyNames(companies: CheckedCompany[]): string[] {
+  return [
+    ...new Set(
+      companies
+        .filter((company) => (company.sourceHealth ?? "ok") === "ok" && company.atsProvider)
+        .map((company) => company.normalizedName),
+    ),
+  ]
+}
+
+function boardKey(provider?: string, identifier?: string): string | null {
+  if (!provider || !identifier) return null
+  return `${provider.toLowerCase()}:${identifier.toLowerCase()}`
+}
+
+async function disabledBoardKeys(db: Sql): Promise<string[]> {
+  const result = await db.query<{ provider: string; identifier: string }>(
+    "SELECT provider, identifier FROM disabled_sources",
+  )
+  return result.rows.map((row) => `${row.provider}:${row.identifier.toLowerCase()}`)
+}
+
+function withoutDisabledBoards(companies: SeedCompany[], disabled: string[]): SeedCompany[] {
+  const blocked = new Set(disabled)
+  return companies.map((company) => {
+    const key = boardKey(company.atsProvider, company.atsIdentifier)
+    if (!key || !blocked.has(key)) return company
+    return { ...company, atsProvider: undefined, atsIdentifier: undefined }
+  })
+}
+
+async function disableStaleBoards(db: Sql, boards: StaleBoard[]) {
+  for (const board of boards) {
+    const provider = board.provider.toLowerCase()
+    const identifier = board.identifier.toLowerCase()
+    await db.query(
+      `INSERT INTO disabled_sources (provider, identifier, company_name, reason)
+       VALUES ($1, $2, $3, '404')
+       ON CONFLICT (provider, identifier) DO NOTHING`,
+      [provider, identifier, board.companyName],
+    )
+    await db.query(
+      `UPDATE companies
+       SET ats_status = 'disabled', ats_provider = NULL, ats_identifier = NULL
+       WHERE lower(ats_provider) = $1 AND lower(ats_identifier) = $2`,
+      [provider, identifier],
+    )
+  }
+}
+
+async function retireUnseen(db: Sql, healthy: string[], cutoff: Date) {
+  if (healthy.length === 0) return
+  await db.query(
+    `UPDATE jobs AS j
+     SET consecutive_misses = j.consecutive_misses + 1
+     FROM companies AS c
+     WHERE c.id = j.company_id
+       AND c.normalized_name = ANY($1::text[])
+       AND j.last_seen_live_at IS NOT NULL
+       AND j.last_seen_at < $2::timestamptz
+       AND j.availability = 'active'`,
+    [healthy, cutoff.toISOString()],
+  )
+  await db.query(
+    `UPDATE jobs
+     SET availability = 'unavailable'
+     WHERE consecutive_misses >= 2
+       AND availability = 'active'`,
+  )
+}
+
+function logSourceWarnings(warnings: string[]) {
+  if (warnings.length === 0) return
+  console.warn(`Open Desk source warnings (${warnings.length})\n${warnings.join("\n")}`)
 }
 
 export async function setFeedback(input: Database, jobId: string, action: FeedbackAction): Promise<void> {

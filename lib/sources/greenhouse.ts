@@ -46,6 +46,7 @@ export function greenhouseJobsToPostings(
       applicationUrl,
       externalId: String(job.id),
       atsProvider: "greenhouse",
+      atsIdentifier: company.atsIdentifier,
       companyName: company.name,
       companyWebsite: company.website,
       careersUrl: `https://boards.greenhouse.io/${company.atsIdentifier}`,
