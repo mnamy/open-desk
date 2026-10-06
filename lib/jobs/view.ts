@@ -1,4 +1,5 @@
 import type { DeskJob, FeedbackRecord, SearchRun } from "@/lib/db/repository"
+import { orderWithDiversity } from "@/lib/jobs/diversity"
 import { FEEDS, jobInFeed, type FeedId } from "@/lib/jobs/feeds"
 import { adjustRanking, buildProfile, summarizeProfile, type PreferenceSummary } from "@/lib/jobs/preferences"
 import { formatDeskTime, freshness, matchesPostedFilter } from "@/lib/jobs/freshness"
@@ -125,7 +126,7 @@ export function annotatePreferences(
 }
 
 export function visibleJobs(jobs: DeskJob[], feed: FeedId, filters: DeskFilters, now = new Date()): DeskJob[] {
-  return jobs
+  const filtered = jobs
     .filter((job) => jobInFeed(job, feed))
     .filter((job) => !filters.city || filters.city === "any" || job.city === filters.city)
     .filter((job) => !filters.role || filters.role === "any" || job.roleFamily === filters.role)
@@ -142,12 +143,13 @@ export function visibleJobs(jobs: DeskJob[], feed: FeedId, filters: DeskFilters,
       return true
     })
     .filter((job) => !filters.risk || filters.risk === "any" || job.qualificationRisk === filters.risk)
-    .sort((a, b) => {
-      if (feed === "new") {
-        return b.firstSeenAt.getTime() - a.firstSeenAt.getTime() || rankScore(b) - rankScore(a)
-      }
-      return rankScore(b) - rankScore(a) || a.title.localeCompare(b.title)
-    })
+  if (feed === "top") return orderWithDiversity(filtered, rankScore)
+  return filtered.sort((a, b) => {
+    if (feed === "new") {
+      return b.firstSeenAt.getTime() - a.firstSeenAt.getTime() || rankScore(b) - rankScore(a)
+    }
+    return rankScore(b) - rankScore(a) || a.title.localeCompare(b.title)
+  })
 }
 
 export function toCard(job: DeskJob, now = new Date()): CardModel {

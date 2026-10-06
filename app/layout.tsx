@@ -15,7 +15,7 @@ const display = Fraunces({
 
 export const metadata: Metadata = {
   title: "Open Desk",
-  description: "Entry-level roles in New York, Chicago, Boston, Miami, and Austin.",
+  description: "Early-career tech generalist roles in New York, Chicago, Boston, Miami, and Austin.",
 }
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -39,24 +39,24 @@ const TITLE_RULES: { family: string; re: RegExp }[] = [
   },
   {
     family: "Product",
-    re: /\b(product managers?|product management|associate product managers?|product associates?|product operations|product ops|product strateg(?:y|ist)|product generalists?|product analysts?|product development|\bapm\b)\b/i,
+    re: /\b(product managers?|product management|associate product managers?|product associates?|product strateg(?:y|ist)|product generalists?|product analysts?|product development|\bapm\b)\b/i,
   },
   {
     family: "Founder's office",
     re: /founder'?s(?:\s+office|\s+associate)?|chief of staff|founding associates?|startup generalists?/i,
   },
-  {
-    family: "Strategy & operations",
-    re: /\b(strategy\s*(?:&|and)\s*operations|business operations|biz\s?ops|strategy associates?|strategists?|technology strategy|business analysts?)\b/i,
-  },
-  {
-    family: "Innovation",
-    re: /\b(innovation|new ventures|venture builders?|venture building|venture associates?)\b/i,
-  },
   { family: "Growth", re: /\bgrowth\b/i },
   {
     family: "Customer experience",
     re: /\b(customer experience|customer success|customer operations)\b/i,
+  },
+  {
+    family: "Strategy & operations",
+    re: /\b(strategy\s*(?:&|and)\s*operations|business operations|biz\s?ops|strategy associates?|strategists?|technology strategy|business analysts?|strategic operations|startup operations|founding operations|product operations|product ops|operations associates?|operations analysts?)\b/i,
+  },
+  {
+    family: "Innovation",
+    re: /\b(innovation|new ventures|venture builders?|venture building|venture associates?)\b/i,
   },
   {
     family: "Program",
@@ -84,12 +84,13 @@ const DESCRIPTION_RULES: { family: string; re: RegExp }[] = [
   { family: "Insights", re: /\b(consumer insights|user insights|customer insights)\b/i },
   {
     family: "Product",
-    re: /\b(product manager|product operations|product strategy|associate product manager|product associate)\b/i,
+    re: /\b(product manager|product strategy|associate product manager|product associate)\b/i,
   },
   { family: "Founder's office", re: /\bfounder'?s (?:associate|office)\b/i },
+  { family: "Growth", re: /\b(growth strategy|growth operations|product growth)\b/i },
   {
     family: "Strategy & operations",
-    re: /\b(business operations|strategy and operations|strategy & operations)\b/i,
+    re: /\b(business operations|strategy and operations|strategy & operations|product operations|operations associate|operations analyst)\b/i,
   },
 ]
 

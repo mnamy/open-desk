@@ -5,6 +5,8 @@ import { normalizeCompanyName, plainText } from "@/lib/jobs/text"
 
 /** One feature can move a role by at most this many fit points. */
 export const FEATURE_CAP = 4
+/** A single role family cannot crowd out the other explicit target families. */
+export const ROLE_FAMILY_CAP = 1.5
 /** The whole learned adjustment stays inside this band. */
 export const TOTAL_CAP = 10
 /** Card copy appears once the learned shift is large enough to matter. */
@@ -530,7 +532,10 @@ export function buildProfile(jobs: FeatureInput[], events: LearningEvent[], rese
       buckets.set(addition.key, current)
     }
   }
-  for (const bucket of buckets.values()) bucket.weight = clamp(bucket.weight, FEATURE_CAP)
+  for (const bucket of buckets.values()) {
+    if (bucket.key.startsWith("role:") && bucket.weight > ROLE_FAMILY_CAP) bucket.weight = ROLE_FAMILY_CAP
+    else bucket.weight = clamp(bucket.weight, FEATURE_CAP)
+  }
   return { features: [...buckets.values()] }
 }
 
