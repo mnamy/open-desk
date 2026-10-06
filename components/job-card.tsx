@@ -33,6 +33,7 @@ export function JobCard({ job }: { job: CardModel }) {
           {job.isNew ? <Badge variant="secondary">New</Badge> : null}
           {job.unavailable ? <Badge variant="outline">Unavailable</Badge> : null}
           <Badge variant="outline">{job.sample ? "Sample" : "Live"}</Badge>
+          {job.added ? <Badge variant="outline">Added</Badge> : null}
           {job.sourceBadges.map((source) => (
             <Badge key={source} variant="secondary">
               {source}
@@ -56,6 +57,7 @@ export function JobCard({ job }: { job: CardModel }) {
         <section>
           <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Why it matches</h3>
           <p className="mt-1 text-sm leading-6">{job.whyMatch}</p>
+          {job.preferenceNote ? <p className="mt-2 text-sm leading-6 text-muted-foreground">{job.preferenceNote}</p> : null}
         </section>
         <section>
           <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Possible stretch</h3>

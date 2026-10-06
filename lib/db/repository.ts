@@ -4,7 +4,9 @@ import { postingsFor } from "@/data/sample-postings"
 import { createClassifier } from "@/lib/llm/classifier"
 import type { Classification, QualificationRisk } from "@/lib/llm/types"
 import { processPostings } from "@/lib/jobs/pipeline"
+import { validRejectionReasons } from "@/lib/jobs/reasons"
 import { normalizeCompanyName } from "@/lib/jobs/text"
+import type { RawPosting } from "@/lib/sources/types"
 import { asSql, type Sql } from "@/lib/db/sql"
 import { writeProcessed } from "@/lib/db/write-jobs"
 import { createHttpClient, type HttpClient } from "@/lib/sources/http"
@@ -22,6 +24,19 @@ import type { SeedCompany } from "@/data/company-seed"
 type Database = Parameters<typeof asSql>[0]
 
 export type FeedbackAction = "save" | "applied" | "not_interested" | "restore"
+
+export interface FeedbackDetail {
+  reasons?: string[]
+  note?: string
+}
+
+export interface FeedbackRecord {
+  jobId: string
+  action: string
+  createdAt: Date
+  note: string | null
+  reasons: string[]
+}
 
 export interface DeskSource {
   source: string
@@ -53,6 +68,10 @@ export interface DeskJob {
   firstSurfacedAt: Date | null
   lastSeenAt: Date
   availability: "active" | "unavailable"
+  description: string
+  origin: string
+  preferenceDelta: number
+  preferenceNote: string | null
 }
 
 export interface SearchRun {
@@ -429,6 +448,8 @@ interface JobRow {
   first_surfaced_at: Date | string | null
   last_seen_at: Date | string
   availability: string | null
+  description: string | null
+  origin: string | null
 }
 
 export async function listDeskJobs(input: Database): Promise<DeskJob[]> {
@@ -438,11 +459,15 @@ export async function listDeskJobs(input: Database): Promise<DeskJob[]> {
       j.id, j.title, j.role_family, j.normalized_city, j.work_arrangement, j.experience_label,
       j.posted_at, j.first_seen_at, j.application_url, j.source, j.opportunity_fit, j.qualification_risk,
       j.why_match, j.stretch_reason, j.feed_bucket, j.is_new,
-      j.first_surfaced_at, j.last_seen_at, j.availability,
+      j.first_surfaced_at, j.last_seen_at, j.availability, j.description, j.origin,
       c.name AS company_name, c.industry, c.discovered_from
     FROM jobs j
     JOIN companies c ON c.id = j.company_id
-    WHERE j.feed_bucket <> 'excluded'`,
+    WHERE j.feed_bucket <> 'excluded'
+       OR EXISTS (
+         SELECT 1 FROM feedback f
+         WHERE f.job_id = j.id AND f.action IN ('applied', 'save', 'not_interested')
+       )`,
   )
   const sources = await db.query<{ job_id: string; source: string; source_url: string }>(
     "SELECT job_id, source, source_url FROM job_sources",
@@ -477,6 +502,10 @@ export async function listDeskJobs(input: Database): Promise<DeskJob[]> {
       .sort((a, b) => Number(b.source === row.source) - Number(a.source === row.source))
       .map((source) => ({ source: source.source, sourceUrl: source.source_url })),
     actions: feedback.rows.filter((item) => item.job_id === row.id).map((item) => item.action),
+    description: row.description ?? "",
+    origin: row.origin ?? "search",
+    preferenceDelta: 0,
+    preferenceNote: null,
   }))
   const liveExists = mapped.some((job) => !job.sample)
   if (!liveExists) return mapped
@@ -727,7 +756,12 @@ function logSourceWarnings(warnings: string[]) {
   console.warn(`Open Desk source warnings (${warnings.length})\n${warnings.join("\n")}`)
 }
 
-export async function setFeedback(input: Database, jobId: string, action: FeedbackAction): Promise<void> {
+export async function setFeedback(
+  input: Database,
+  jobId: string,
+  action: FeedbackAction,
+  detail?: FeedbackDetail,
+): Promise<void> {
   const db = asSql(input)
   if (action === "restore") {
     await db.query("DELETE FROM feedback WHERE job_id = $1 AND action = 'not_interested'", [jobId])
@@ -735,14 +769,29 @@ export async function setFeedback(input: Database, jobId: string, action: Feedba
   }
 
   if (action === "not_interested") {
+    const reasons = validRejectionReasons(detail?.reasons ?? [])
+    if (reasons.length === 0) throw new Error("Choose at least one reason")
+    const note = detail?.note?.trim() ? detail.note.trim().slice(0, 1000) : null
     const existing = await db.query<{ id: string }>(
       "SELECT id FROM feedback WHERE job_id = $1 AND action = 'not_interested'",
       [jobId],
     )
+    const feedbackId = existing.rows[0]?.id ?? randomUUID()
     if (!existing.rows[0]) {
-      await db.query("INSERT INTO feedback (id, job_id, action) VALUES ($1, $2, 'not_interested')", [
-        randomUUID(),
+      await db.query("INSERT INTO feedback (id, job_id, action, note) VALUES ($1, $2, 'not_interested', $3)", [
+        feedbackId,
         jobId,
+        note,
+      ])
+    } else {
+      await db.query("UPDATE feedback SET note = $2 WHERE id = $1", [feedbackId, note])
+    }
+    await db.query("DELETE FROM feedback_reasons WHERE feedback_id = $1", [feedbackId])
+    for (const reason of reasons) {
+      await db.query("INSERT INTO feedback_reasons (id, feedback_id, reason) VALUES ($1, $2, $3)", [
+        randomUUID(),
+        feedbackId,
+        reason,
       ])
     }
     return
@@ -757,4 +806,83 @@ export async function setFeedback(input: Database, jobId: string, action: Feedba
     return
   }
   await db.query("INSERT INTO feedback (id, job_id, action) VALUES ($1, $2, $3)", [randomUUID(), jobId, action])
+}
+
+export async function listFeedback(input: Database): Promise<FeedbackRecord[]> {
+  const db = asSql(input)
+  const result = await db.query<{
+    job_id: string
+    action: string
+    created_at: Date | string
+    note: string | null
+    reason: string | null
+  }>(
+    `SELECT f.job_id, f.action, f.created_at, f.note, r.reason
+     FROM feedback f
+     LEFT JOIN feedback_reasons r ON r.feedback_id = f.id
+     ORDER BY f.created_at ASC`,
+  )
+  const grouped = new Map<string, FeedbackRecord>()
+  for (const row of result.rows) {
+    const key = `${row.job_id}:${row.action}`
+    const existing = grouped.get(key)
+    if (!existing) {
+      grouped.set(key, {
+        jobId: row.job_id,
+        action: row.action,
+        createdAt: asDate(row.created_at) ?? new Date(),
+        note: row.note,
+        reasons: row.reason ? [row.reason] : [],
+      })
+    } else if (row.reason && !existing.reasons.includes(row.reason)) {
+      existing.reasons.push(row.reason)
+    }
+  }
+  return [...grouped.values()]
+}
+
+export async function preferenceResetAt(input: Database): Promise<Date | null> {
+  const db = asSql(input)
+  const result = await db.query<{ reset_at: Date | string | null }>(
+    "SELECT reset_at FROM preference_meta WHERE id = 'default'",
+  )
+  return asDate(result.rows[0]?.reset_at ?? null)
+}
+
+export async function resetLearnedPreferences(input: Database, now = new Date()): Promise<void> {
+  const db = asSql(input)
+  await db.query(
+    `INSERT INTO preference_meta (id, reset_at) VALUES ('default', $1)
+     ON CONFLICT (id) DO UPDATE SET reset_at = EXCLUDED.reset_at`,
+    [now.toISOString()],
+  )
+}
+
+export async function importExternalJob(
+  input: Database,
+  posting: RawPosting,
+  action: "applied" | "save" | "desk",
+  now = new Date(),
+): Promise<{ jobId: string; created: boolean; title: string; companyName: string; feedBucket: string }> {
+  const db = asSql(input)
+  const processed = await processPostings([{ ...posting, discoveredFrom: "external_user", release: "search" }], now)
+  const job = processed[0]
+  if (!job) throw new Error("Open Desk could not read that job")
+  const written: { id: string; created: boolean }[] = []
+  await db.transaction(async (tx) => {
+    await writeProcessed(tx, processed, now, { markNew: true, live: false, written })
+  })
+  const row = written[0]
+  if (!row) throw new Error("Open Desk could not save that job")
+  if (row.created) {
+    await db.query("UPDATE jobs SET origin = 'external_user' WHERE id = $1", [row.id])
+  }
+  if (action === "applied" || action === "save") await setFeedback(db, row.id, action)
+  return {
+    jobId: row.id,
+    created: row.created,
+    title: job.title,
+    companyName: job.companyName,
+    feedBucket: job.feedBucket,
+  }
 }

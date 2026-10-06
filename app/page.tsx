@@ -3,13 +3,25 @@ import { EmptyState } from "@/components/empty-state"
 import { FeedNav } from "@/components/feed-nav"
 import { Filters } from "@/components/filters"
 import { JobCard } from "@/components/job-card"
+import { AddJobButton } from "@/components/add-job"
+import { LearnedPreferences } from "@/components/learned-preferences"
 import { RunSearchButton } from "@/components/run-search"
 import { buttonVariants } from "@/components/ui/button"
 import { getDb } from "@/lib/db/client"
 import { sanitizeDbError } from "@/lib/db/postgres-url.mjs"
-import { latestSearchRun, listDeskJobs, type DeskJob } from "@/lib/db/repository"
+import { latestSearchRun, listDeskJobs, listFeedback, preferenceResetAt, type DeskJob } from "@/lib/db/repository"
 import { FEEDS, jobInFeed, type FeedId } from "@/lib/jobs/feeds"
-import { emptyCopy, filterOptions, hasActiveFilters, parseFeed, runSummary, toCard, visibleJobs, type DeskFilters } from "@/lib/jobs/view"
+import {
+  annotatePreferences,
+  emptyCopy,
+  filterOptions,
+  hasActiveFilters,
+  parseFeed,
+  runSummary,
+  toCard,
+  visibleJobs,
+  type DeskFilters,
+} from "@/lib/jobs/view"
 import { summarizeWarnings } from "@/lib/sources/warnings"
 
 export const dynamic = "force-dynamic"
@@ -94,7 +106,14 @@ export default async function Home({
       </main>
     )
   }
-  const [jobs, run] = await Promise.all([listDeskJobs(db), latestSearchRun(db)])
+  const [loaded, run, feedback, resetAt] = await Promise.all([
+    listDeskJobs(db),
+    latestSearchRun(db),
+    listFeedback(db),
+    preferenceResetAt(db),
+  ])
+  const learned = annotatePreferences(loaded, feedback, resetAt)
+  const jobs = learned.jobs
   const now = new Date()
   const counts = countFeeds(jobs)
   const shown = visibleJobs(jobs, feed, filters, now)
@@ -114,7 +133,10 @@ export default async function Home({
             Remote-only stays out.
           </p>
         </div>
-        <RunSearchButton />
+        <div className="flex flex-col items-start gap-2 sm:items-end">
+          <RunSearchButton />
+          <AddJobButton />
+        </div>
       </header>
 
       <p className="text-sm leading-6 text-muted-foreground">{runSummary(run)}</p>
@@ -124,8 +146,11 @@ export default async function Home({
 
       <p className="text-sm leading-6 text-muted-foreground">
         Fit is how much the work resembles what you want. Risk is how much of a stretch applying would be. Risk does
-        not change the order.
+        not change the order. Learned preferences can reorder eligible roles. They do not change which roles are allowed
+        on the desk.
       </p>
+
+      <LearnedPreferences summary={learned.summary} />
 
       <Filters values={filters} options={options} />
 

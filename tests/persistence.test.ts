@@ -91,7 +91,7 @@ describe("job memory across searches", () => {
     expect(first.jobsNew).toBe(3)
     expect(associate?.isNew).toBe(true)
 
-    await setFeedback(db, associate!.id, "not_interested")
+    await setFeedback(db, associate!.id, "not_interested", { reasons: ["wrong_function"] })
     await setFeedback(db, analyst!.id, "save")
     await setFeedback(db, research!.id, "applied")
     await setFeedback(db, research!.id, "save")
@@ -137,6 +137,10 @@ describe("job memory across searches", () => {
     expect(applied?.actions).toEqual(expect.arrayContaining(["save", "applied"]))
     expect(jobInFeed(saved!, "saved")).toBe(true)
     expect(jobInFeed(applied!, "applied")).toBe(true)
+    expect(jobInFeed(applied!, "saved")).toBe(false)
+    expect(jobInFeed(applied!, "all")).toBe(false)
+    expect(jobInFeed(applied!, "top")).toBe(false)
+    expect(jobInFeed(applied!, "new")).toBe(false)
 
     const after = await db.query<{ first_seen_at: Date | string; first_surfaced_at: Date | string }>(
       "SELECT first_seen_at, first_surfaced_at FROM jobs WHERE id = $1",

@@ -26,11 +26,15 @@ export function isHidden(actions: string[]): boolean {
 
 export function jobInFeed(job: FeedJob, feed: FeedId): boolean {
   const hidden = isHidden(job.actions)
+  const applied = job.actions.includes("applied")
   const closed = job.availability === "unavailable"
   if (feed === "hidden") return hidden && job.feedBucket !== "excluded"
-  if (hidden || job.feedBucket === "excluded") return false
+  if (hidden) return false
+  if (feed === "applied") return applied
+  // Applied controls the desk. Saved can still be stored on the same role.
+  if (applied) return false
+  if (job.feedBucket === "excluded") return false
   if (feed === "saved") return job.actions.includes("save")
-  if (feed === "applied") return job.actions.includes("applied")
   if (closed) return false
   if (feed === "stretch") return job.feedBucket === "stretch"
   if (job.feedBucket !== "main") return false
