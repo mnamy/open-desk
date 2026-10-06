@@ -59,6 +59,7 @@ export function ashbyJobsToPostings(jobs: AshbyJob[], company: AshbyBoardCompany
       applicationUrl,
       externalId: job.id,
       atsProvider: "ashby",
+      atsIdentifier: company.atsIdentifier,
       companyName: company.name,
       companyWebsite: company.website,
       careersUrl: `https://jobs.ashbyhq.com/${company.atsIdentifier}`,

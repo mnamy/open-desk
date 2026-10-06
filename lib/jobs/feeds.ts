@@ -17,6 +17,7 @@ export interface FeedJob {
   isNew: boolean
   opportunityFit: number | null
   actions: string[]
+  availability?: "active" | "unavailable"
 }
 
 export function isHidden(actions: string[]): boolean {
@@ -25,10 +26,12 @@ export function isHidden(actions: string[]): boolean {
 
 export function jobInFeed(job: FeedJob, feed: FeedId): boolean {
   const hidden = isHidden(job.actions)
+  const closed = job.availability === "unavailable"
   if (feed === "hidden") return hidden && job.feedBucket !== "excluded"
   if (hidden || job.feedBucket === "excluded") return false
   if (feed === "saved") return job.actions.includes("save")
   if (feed === "applied") return job.actions.includes("applied")
+  if (closed) return false
   if (feed === "stretch") return job.feedBucket === "stretch"
   if (job.feedBucket !== "main") return false
   if (feed === "new") return job.isNew

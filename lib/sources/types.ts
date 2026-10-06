@@ -19,6 +19,8 @@ export interface RawPosting {
   applicationUrl: string
   externalId?: string
   atsProvider?: string
+  /** Company board slug, never the individual job id. */
+  atsIdentifier?: string
   companyName: string
   companyWebsite?: string
   careersUrl?: string

@@ -1,4 +1,5 @@
 import { normalizeCompanyName } from "@/lib/jobs/text"
+import { isStaleFailure } from "@/lib/sources/warnings"
 import type { SeedCompany } from "@/data/company-seed"
 import { ashbyJobsToPostings, type AshbyJob } from "@/lib/sources/ashby"
 import { discoverCareerPage } from "@/lib/sources/career-page"
@@ -10,6 +11,8 @@ import { fetchWelcomePage, readWelcomeConfig, welcomeHitsToPostings, WELCOME_MAX
 import { wellfoundHtmlToPostings, wellfoundSearchUrls } from "@/lib/sources/wellfound"
 import { YC_CITY_QUERIES, ycCards, ycDetailToPosting, type YcJobCard } from "@/lib/sources/yc"
 
+export type SourceHealth = "ok" | "stale" | "temporary"
+
 export interface CheckedCompany {
   name: string
   normalizedName: string
@@ -19,6 +22,13 @@ export interface CheckedCompany {
   atsIdentifier?: string
   industry?: string
   discoveredFrom: string
+  sourceHealth?: SourceHealth
+}
+
+export interface StaleBoard {
+  provider: string
+  identifier: string
+  companyName: string
 }
 
 export interface LiveCollection {
@@ -26,6 +36,7 @@ export interface LiveCollection {
   companiesChecked: number
   warnings: string[]
   checkedCompanies: CheckedCompany[]
+  staleBoards: StaleBoard[]
 }
 
 function warningText(error: unknown): string {
@@ -43,7 +54,18 @@ function checkedFrom(company: SeedCompany, discoveredFrom: string, extra?: Parti
     atsProvider: extra?.atsProvider ?? company.atsProvider,
     atsIdentifier: extra?.atsIdentifier ?? company.atsIdentifier,
     discoveredFrom,
+    sourceHealth: extra?.sourceHealth ?? "ok",
   }
+}
+
+function boardProblem(company: SeedCompany, error: unknown): { warning: string; health: SourceHealth; stale?: StaleBoard } {
+  const warning = `${company.atsProvider} · ${company.name}: ${warningText(error)}`
+  const health: SourceHealth = isStaleFailure(warning) ? "stale" : "temporary"
+  const stale =
+    health === "stale" && company.atsProvider && company.atsIdentifier
+      ? { provider: company.atsProvider, identifier: company.atsIdentifier.toLowerCase(), companyName: company.name }
+      : undefined
+  return { warning, health, stale }
 }
 
 async function fetchBoard(company: SeedCompany, client: HttpClient, now: Date, timeoutMs = 20_000): Promise<RawPosting[]> {
@@ -180,6 +202,7 @@ export async function collectLivePostings(options: {
   discoverCareers?: boolean
   fetchMarketplaces?: boolean
   limits?: { ycDetails?: number; discoveryCompanies?: number }
+  disabledBoards?: string[]
 }): Promise<LiveCollection> {
   const now = options.now ?? new Date()
   const fetchYcJobs = options.fetchYc !== false
@@ -192,22 +215,36 @@ export async function collectLivePostings(options: {
   const checked: CheckedCompany[] = []
   const seenBoards = new Set<string>()
 
-  const boardCompanies = options.companies.filter((company) => company.atsProvider && company.atsIdentifier)
+  const disabledBoards = new Set(options.disabledBoards ?? [])
+  const boardCompanies = options.companies.filter((company) => {
+    const key = boardKeyOf(company.atsProvider, company.atsIdentifier)
+    return Boolean(key) && !disabledBoards.has(key!)
+  })
   const boardResults = await mapPool(boardCompanies, 6, async (company) => {
     const key = `${company.atsProvider}:${company.atsIdentifier}`
-    if (seenBoards.has(key)) return { company, postings: [] as RawPosting[], warning: undefined }
+    if (seenBoards.has(key)) {
+      return { company, postings: [] as RawPosting[], warning: undefined as string | undefined, health: "ok" as const, stale: undefined, duplicate: true }
+    }
     seenBoards.add(key)
     try {
       const found = await fetchBoard(company, options.client, now)
-      return { company, postings: found, warning: undefined as string | undefined }
+      return { company, postings: found, warning: undefined as string | undefined, health: "ok" as const, stale: undefined, duplicate: false }
     } catch (error) {
-      return { company, postings: [] as RawPosting[], warning: `${company.atsProvider} · ${company.name}: ${warningText(error)}` }
+      const problem = boardProblem(company, error)
+      return { company, postings: [] as RawPosting[], warning: problem.warning, health: problem.health, stale: problem.stale, duplicate: false }
     }
   })
+  const staleBoards: StaleBoard[] = []
   for (const result of boardResults) {
     postings.push(...result.postings)
+    if (result.duplicate) continue
     if (result.warning) warnings.push(result.warning)
-    checked.push(checkedFrom(result.company, result.company.atsProvider ?? "seed"))
+    if (result.stale) staleBoards.push(result.stale)
+    checked.push(
+      checkedFrom(result.company, result.company.atsProvider ?? "seed", {
+        sourceHealth: result.health ?? "ok",
+      }),
+    )
   }
 
   if (fetchYcJobs) {
@@ -270,11 +307,10 @@ export async function collectLivePostings(options: {
         checked.push(
           checkedFrom(company, "career_page", {
             careersUrl: found.careersUrl ?? undefined,
-            atsProvider: found.ats.provider,
-            atsIdentifier: found.ats.identifier,
+            sourceHealth: "temporary",
           }),
         )
-        if (!seenBoards.has(key)) {
+        if (!disabledBoards.has(key) && !seenBoards.has(key)) {
           seenBoards.add(key)
           followUp.push({
             ...company,
@@ -294,14 +330,35 @@ export async function collectLivePostings(options: {
 
     const routed = await mapPool(followUp, 4, async (company) => {
       try {
-        return { company, postings: await fetchBoard(company, options.client, now), warning: undefined as string | undefined }
+        return {
+          company,
+          postings: await fetchBoard(company, options.client, now),
+          warning: undefined as string | undefined,
+          health: "ok" as const,
+          stale: undefined,
+        }
       } catch (error) {
-        return { company, postings: [] as RawPosting[], warning: `${company.atsProvider} · ${company.name}: ${warningText(error)}` }
+        const problem = boardProblem(company, error)
+        return {
+          company,
+          postings: [] as RawPosting[],
+          warning: problem.warning,
+          health: problem.health as SourceHealth,
+          stale: problem.stale,
+        }
       }
     })
     for (const result of routed) {
       postings.push(...result.postings)
       if (result.warning) warnings.push(result.warning)
+      if (result.stale) staleBoards.push(result.stale)
+      checked.push(
+        checkedFrom(result.company, result.company.atsProvider ?? "career_page", {
+          atsProvider: result.health === "ok" ? result.company.atsProvider : undefined,
+          atsIdentifier: result.health === "ok" ? result.company.atsIdentifier : undefined,
+          sourceHealth: result.health ?? "ok",
+        }),
+      )
     }
   }
 
@@ -313,6 +370,7 @@ export async function collectLivePostings(options: {
     companiesChecked: uniqueCompanies.size,
     warnings,
     checkedCompanies: [...uniqueCompanies.values()],
+    staleBoards,
   }
 }
 
@@ -327,6 +385,8 @@ export interface SearchCursor {
   seenBoards: string[]
   wellfoundIndex?: number
   welcomePage?: number
+  disabledBoards?: string[]
+  healthyCompanies?: string[]
 }
 
 const SLICE_BOARD_TIMEOUT_MS = 12_000
@@ -337,7 +397,7 @@ const SLICE_YC_DETAILS = 8
 const SLICE_DISCOVERY = 3
 const SLICE_WELLFOUND = 8
 
-export function initialCursor(companies: SeedCompany[]): SearchCursor {
+export function initialCursor(companies: SeedCompany[], disabledBoards: string[] = []): SearchCursor {
   return {
     companies,
     phase: "boards",
@@ -349,15 +409,26 @@ export function initialCursor(companies: SeedCompany[]): SearchCursor {
     seenBoards: [],
     wellfoundIndex: 0,
     welcomePage: 0,
+    disabledBoards,
+    healthyCompanies: [],
   }
 }
 
 function emptyCollection(): LiveCollection {
-  return { postings: [], companiesChecked: 0, warnings: [], checkedCompanies: [] }
+  return { postings: [], companiesChecked: 0, warnings: [], checkedCompanies: [], staleBoards: [] }
+}
+
+function boardKeyOf(provider: string | undefined, identifier: string | undefined): string | null {
+  if (!provider || !identifier) return null
+  return `${provider}:${identifier.toLowerCase()}`
 }
 
 function boardTargets(cursor: SearchCursor): SeedCompany[] {
-  return cursor.companies.filter((company) => company.atsProvider && company.atsIdentifier)
+  const disabled = new Set(cursor.disabledBoards ?? [])
+  return cursor.companies.filter((company) => {
+    const key = boardKeyOf(company.atsProvider, company.atsIdentifier)
+    return Boolean(key) && !disabled.has(key!)
+  })
 }
 
 function discoveryTargets(cursor: SearchCursor): SeedCompany[] {
@@ -418,6 +489,7 @@ async function collectBoardSlice(cursor: SearchCursor, client: HttpClient, now: 
   const postings: RawPosting[] = []
   const warnings: string[] = []
   const checked: CheckedCompany[] = []
+  const staleBoards: StaleBoard[] = []
   const seen = new Set(cursor.seenBoards)
   let index = cursor.boardIndex
   while (index < boards.length && index - cursor.boardIndex < SLICE_MAX_BOARDS) {
@@ -425,20 +497,20 @@ async function collectBoardSlice(cursor: SearchCursor, client: HttpClient, now: 
     const company = boards[index]
     index += 1
     const key = boardKey(company)
-    if (key && seen.has(key)) {
-      checked.push(checkedFrom(company, company.atsProvider ?? "seed"))
-      continue
-    }
+    if (key && seen.has(key)) continue
     if (key) seen.add(key)
     try {
       postings.push(...(await fetchBoard(company, client, now, SLICE_BOARD_TIMEOUT_MS)))
+      checked.push(checkedFrom(company, company.atsProvider ?? "seed"))
     } catch (error) {
-      warnings.push(`${company.atsProvider} · ${company.name}: ${warningText(error)}`)
+      const problem = boardProblem(company, error)
+      warnings.push(problem.warning)
+      if (problem.stale) staleBoards.push(problem.stale)
+      checked.push(checkedFrom(company, company.atsProvider ?? "seed", { sourceHealth: problem.health }))
     }
-    checked.push(checkedFrom(company, company.atsProvider ?? "seed"))
   }
   const next = skipEmpty({ ...cursor, boardIndex: index, seenBoards: [...seen] })
-  return { cursor: next, collection: collectionFrom(postings, warnings, checked) }
+  return { cursor: next, collection: collectionFrom(postings, warnings, checked, staleBoards) }
 }
 
 function skipYc(cursor: SearchCursor) {
@@ -517,11 +589,11 @@ async function collectDiscoverySlice(cursor: SearchCursor, client: HttpClient, n
       checked.push(
         checkedFrom(company, "career_page", {
           careersUrl: found.careersUrl ?? undefined,
-          atsProvider: found.ats.provider,
-          atsIdentifier: found.ats.identifier,
+          sourceHealth: "temporary",
         }),
       )
-      if (!seen.has(key)) {
+      const disabled = new Set(cursor.disabledBoards ?? [])
+      if (!disabled.has(key) && !seen.has(key)) {
         seen.add(key)
         followUps.push({ ...company, atsProvider: found.ats.provider, atsIdentifier: found.ats.identifier })
       }
@@ -542,16 +614,28 @@ async function collectDiscoverySlice(cursor: SearchCursor, client: HttpClient, n
 async function collectFollowUp(cursor: SearchCursor, client: HttpClient, now: Date) {
   const [company, ...rest] = cursor.followUps
   const warnings: string[] = []
+  const checked: CheckedCompany[] = []
+  const staleBoards: StaleBoard[] = []
   let postings: RawPosting[] = []
   if (company) {
     try {
       postings = await fetchBoard(company, client, now, SLICE_BOARD_TIMEOUT_MS)
+      checked.push(checkedFrom(company, company.atsProvider ?? "career_page"))
     } catch (error) {
-      warnings.push(`${company.atsProvider} · ${company.name}: ${warningText(error)}`)
+      const problem = boardProblem(company, error)
+      warnings.push(problem.warning)
+      if (problem.stale) staleBoards.push(problem.stale)
+      checked.push(
+        checkedFrom(company, "career_page", {
+          atsProvider: undefined,
+          atsIdentifier: undefined,
+          sourceHealth: problem.health,
+        }),
+      )
     }
   }
   const next = skipEmpty({ ...cursor, followUps: rest })
-  return { cursor: next, collection: collectionFrom(postings, warnings, []) }
+  return { cursor: next, collection: collectionFrom(postings, warnings, checked, staleBoards) }
 }
 
 async function collectWellfoundSlice(cursor: SearchCursor, client: HttpClient, now: Date) {
@@ -574,7 +658,12 @@ async function collectWelcomeSlice(cursor: SearchCursor, client: HttpClient, now
   return { cursor: next, collection: collectionFrom(found.postings, found.warnings, checked) }
 }
 
-function collectionFrom(postings: RawPosting[], warnings: string[], checked: CheckedCompany[]): LiveCollection {
+function collectionFrom(
+  postings: RawPosting[],
+  warnings: string[],
+  checked: CheckedCompany[],
+  staleBoards: StaleBoard[] = [],
+): LiveCollection {
   const unique = new Map<string, CheckedCompany>()
   for (const company of checked) unique.set(company.normalizedName, company)
   return {
@@ -582,5 +671,6 @@ function collectionFrom(postings: RawPosting[], warnings: string[], checked: Che
     warnings,
     checkedCompanies: [...unique.values()],
     companiesChecked: unique.size,
+    staleBoards,
   }
 }
