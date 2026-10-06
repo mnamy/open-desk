@@ -31,7 +31,7 @@ describe("local database", () => {
     expect(searched.find((job) => job.id === lumen?.id)?.isNew).toBe(false)
 
     await setFeedback(db, lumen!.id, "save")
-    await setFeedback(db, lumen!.id, "not_interested")
+    await setFeedback(db, lumen!.id, "not_interested", { reasons: ["wrong_function"], note: "Not the work I want" })
     const hidden = (await listDeskJobs(db)).find((job) => job.id === lumen?.id)
     expect(hidden?.actions).toContain("save")
     expect(hidden?.actions).toContain("not_interested")

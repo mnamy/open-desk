@@ -1,5 +1,6 @@
-import type { DeskJob, SearchRun } from "@/lib/db/repository"
+import type { DeskJob, FeedbackRecord, SearchRun } from "@/lib/db/repository"
 import { FEEDS, jobInFeed, type FeedId } from "@/lib/jobs/feeds"
+import { adjustRanking, buildProfile, summarizeProfile, type PreferenceSummary } from "@/lib/jobs/preferences"
 import { formatDeskTime, freshness, matchesPostedFilter } from "@/lib/jobs/freshness"
 import { sourceLabel } from "@/lib/jobs/role-family"
 import { arrangementLabel } from "@/lib/jobs/work-arrangement"
@@ -47,6 +48,8 @@ export interface CardModel {
   applied: boolean
   hidden: boolean
   unavailable: boolean
+  preferenceNote: string | null
+  added: boolean
 }
 
 export function parseFeed(value: string | undefined): FeedId {
@@ -71,6 +74,56 @@ export function filterOptions(jobs: DeskJob[]): FilterOptions {
   }
 }
 
+function rankScore(job: DeskJob): number {
+  return (job.opportunityFit ?? 0) + (job.preferenceDelta ?? 0)
+}
+
+export function annotatePreferences(
+  jobs: DeskJob[],
+  feedback: FeedbackRecord[],
+  resetAt: Date | null,
+): { jobs: DeskJob[]; summary: PreferenceSummary } {
+  const profile = buildProfile(
+    jobs.map((job) => ({
+      id: job.id,
+      title: job.title,
+      companyName: job.companyName,
+      industry: job.industry,
+      description: job.description,
+      roleFamily: job.roleFamily,
+      workArrangement: job.workArrangement,
+      city: job.city,
+    })),
+    feedback.map((item) => ({
+      jobId: item.jobId,
+      action: item.action,
+      createdAt: item.createdAt,
+      reasons: item.reasons,
+    })),
+    resetAt,
+  )
+  return {
+    summary: summarizeProfile(profile),
+    jobs: jobs.map((job) => {
+      const adjustment = adjustRanking(
+        {
+          id: job.id,
+          title: job.title,
+          companyName: job.companyName,
+          industry: job.industry,
+          description: job.description,
+          roleFamily: job.roleFamily,
+          workArrangement: job.workArrangement,
+          city: job.city,
+        },
+        profile,
+        job.opportunityFit ?? 0,
+      )
+      return { ...job, preferenceDelta: adjustment.delta, preferenceNote: adjustment.note }
+    }),
+  }
+}
+
 export function visibleJobs(jobs: DeskJob[], feed: FeedId, filters: DeskFilters, now = new Date()): DeskJob[] {
   return jobs
     .filter((job) => jobInFeed(job, feed))
@@ -91,9 +144,9 @@ export function visibleJobs(jobs: DeskJob[], feed: FeedId, filters: DeskFilters,
     .filter((job) => !filters.risk || filters.risk === "any" || job.qualificationRisk === filters.risk)
     .sort((a, b) => {
       if (feed === "new") {
-        return b.firstSeenAt.getTime() - a.firstSeenAt.getTime() || (b.opportunityFit ?? 0) - (a.opportunityFit ?? 0)
+        return b.firstSeenAt.getTime() - a.firstSeenAt.getTime() || rankScore(b) - rankScore(a)
       }
-      return (b.opportunityFit ?? 0) - (a.opportunityFit ?? 0) || a.title.localeCompare(b.title)
+      return rankScore(b) - rankScore(a) || a.title.localeCompare(b.title)
     })
 }
 
@@ -128,6 +181,8 @@ export function toCard(job: DeskJob, now = new Date()): CardModel {
     applied: job.actions.includes("applied"),
     hidden: job.actions.includes("not_interested"),
     unavailable: job.availability === "unavailable",
+    preferenceNote: job.preferenceNote,
+    added: job.origin === "external_user",
   }
 }
 
@@ -188,7 +243,7 @@ export function emptyCopy(feed: FeedId, filtered: boolean): { title: string; bod
     case "applied":
       return {
         title: "Nothing marked applied",
-        body: "Mark Applied after you send one. This list is only the roles you have already put in for.",
+        body: "Mark Applied after you send one. Applied roles leave Top picks, New, All, and Stretch, and stay on this list.",
       }
     case "hidden":
       return {

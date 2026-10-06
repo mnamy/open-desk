@@ -101,7 +101,7 @@ export async function writeProcessed(
   tx: Sql,
   jobs: ProcessedJob[],
   now: Date,
-  options: { markNew: boolean; runId?: string; live?: boolean },
+  options: { markNew: boolean; runId?: string; live?: boolean; written?: { id: string; created: boolean }[] },
 ): Promise<number> {
   if (jobs.length === 0) return 0
   const stored = await loadStored(tx, jobs)
@@ -151,6 +151,10 @@ export async function writeProcessed(
   await updateJobs(tx, prior, companyIds, now, options.live === true)
   await rememberSources(tx, [...fresh, ...prior], now)
   if (options.runId) await rememberRunJobs(tx, options.runId, fresh, prior)
+  if (options.written) {
+    for (const row of fresh) options.written.push({ id: row.id, created: true })
+    for (const row of prior) options.written.push({ id: row.id, created: false })
+  }
   return [...fresh, ...prior].filter((row) => row.isNew).length
 }
 
