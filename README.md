@@ -1,10 +1,10 @@
 # Open Desk
 
-A job desk for entry-level roles in New York, Chicago, Boston, Miami, and Austin. The first screen is a local sample. **Run search** checks live Greenhouse, Ashby, Lever, and YC Work at a Startup boards, plus company career pages, then uses the same normalize, dedupe, hard-filter, and scoring pipeline. LinkedIn is not scraped.
+A job desk for early-career tech generalists interested in product, ops, strategy, growth, research, innovation, and founder or generalist roles in New York, Chicago, Boston, Miami, and Austin. The first screen is a local sample. **Run search** checks live Greenhouse, Ashby, Lever, and YC Work at a Startup boards, plus company career pages, then uses the same normalize, dedupe, hard-filter, and scoring pipeline. LinkedIn is not scraped.
 
 A role reaches the main feed only if it is in one of those cities, is on-site or hybrid (unclear is kept when the office is in one of those cities), and is genuinely about 0–1 years. Roles that prefer about 2 years go to Stretch. Remote-only roles and harder experience bars are stored and excluded.
 
-Each role has two scores. Opportunity fit (0–100) is how much the work resembles the kind of work you want. Qualification risk (low, medium, high) is how much of a stretch applying would be. Risk never replaces fit.
+Each role has two scores. Opportunity fit (0–100) scores ownership, cross-functional work, strategy, experimentation, user exposure, and proximity to decisions. Product exposure helps, and it is one part of the score. Qualification risk (low, medium, high) is how much of a stretch applying would be. Risk never replaces fit.
 
 ## Run locally
 

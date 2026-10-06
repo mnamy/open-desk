@@ -129,8 +129,9 @@ export default async function Home({
           <p className="text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase">Personal desk</p>
           <h1 className="mt-1 font-heading text-4xl tracking-tight sm:text-5xl">Open Desk</h1>
           <p className="mt-3 text-sm leading-6 text-muted-foreground sm:text-base">
-            Entry-level roles worth wanting in New York, Chicago, Boston, Miami, and Austin. On-site or hybrid.
-            Remote-only stays out.
+            Early-career tech generalist roles in product, ops, strategy, growth, research, innovation, and
+            founder or generalist work. New York, Chicago, Boston, Miami, and Austin. On-site or hybrid. Remote-only
+            stays out.
           </p>
         </div>
         <div className="flex flex-col items-start gap-2 sm:items-end">
@@ -145,9 +146,10 @@ export default async function Home({
       <FeedNav feed={feed} counts={counts} query={query.toString()} />
 
       <p className="text-sm leading-6 text-muted-foreground">
-        Fit is how much the work resembles what you want. Risk is how much of a stretch applying would be. Risk does
-        not change the order. Learned preferences can reorder eligible roles. They do not change which roles are allowed
-        on the desk.
+        Fit scores meaningful ownership, cross-functional work, strategy, experimentation, user exposure, and how close
+        the role sits to decisions. Product exposure is one positive signal. Risk is how much of a stretch applying
+        would be. Risk does not change the order. Learned preferences can reorder eligible roles. They do not change
+        which roles are allowed on the desk.
       </p>
 
       <LearnedPreferences summary={learned.summary} />

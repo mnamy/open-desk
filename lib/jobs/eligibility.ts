@@ -75,7 +75,37 @@ const TIER3_SIGNALS =
   /\b(user research|ux research|product strategy|product requirement|experiment|prototype|roadmap|cross-functional|product team|product decision|what to build|what the product)\b/i
 
 const SALES_FUNNEL =
-  /\b(quota-carrying|carry a quota|against a quota|sales quota|outbound prospecting|cold calls?|cold emails?|book \d+ outbound)\b/i
+  /\b(quota-carrying|quota-driven|carry a quota|against a quota|sales quota|outbound prospecting|outbound sales|cold calls?|cold emails?|book \d+ outbound)\b/i
+
+const BAD_GROWTH_TITLE =
+  /\b(performance marketing|growth marketing|demand gen(?:eration)?|lead gen(?:eration)?|paid acquisition|paid social|paid media)\b/i
+
+const GOOD_GROWTH_TITLE =
+  /\b(growth strategy|growth operations|product growth|lifecycle|activation|retention|community growth)\b/i
+
+const GOOD_GROWTH_BODY =
+  /\b(activation|retention|experiment|lifecycle|product growth|growth strategy|growth operations|community growth|engagement|analytics)\b/i
+
+const GOOD_OPS_BODY =
+  /\b(process improvement|analytics|\blaunch|experiment|cross-functional|scal(?:e|ing)|strategic planning|product (?:team|collaboration|lead)|ownership|0\s*(?:→|to)\s*1|zero to one|\bdecide\b|\bdecision\b|strategy|roadmap|user research|what to build|operating plan)\b/i
+
+const GOOD_OPS_TITLE =
+  /\b(strategy|biz\s?ops|business operations|product operations|product ops|strategic operations|startup operations|founding operations)\b/i
+
+const BAD_OPS =
+  /\b(scheduling|calendar management|logistics coordination|data entry|expense reports?|back-office|back office|invoice processing|status reports?)\b/i
+
+const FOUNDER_SIGNAL =
+  /\b(product|strategy|roadmap|user|research|launch|what to build|ownership|cross-functional|experiment|analytics|decision|0\s*(?:→|to)\s*1|generalist|initiative)\b/i
+
+const CX_SIGNAL =
+  /\b(user research|experiment|voice of customer|product team|product issue|product feedback|product improvement|what to build|roadmap)\b/i
+
+const PROGRAM_SIGNAL =
+  /\b(strateg|cross-functional|experiment|launch|roadmap|initiative|what to build|ownership|0\s*(?:→|to)\s*1|analytics)\b/i
+
+const COMMUNITY_SIGNAL =
+  /\b(engagement|strateg|product|experiment|growth|analytics|retention|activation)\b/i
 
 export function titleIsSenior(title: string): boolean {
   const text = title.toLowerCase()
@@ -134,6 +164,7 @@ export function isSalesRole(title: string, description: string, family: string):
   if (/\b(account executive|sales development|business development representative|\bsdr\b|\bbdr\b|enterprise sales|sales representative)\b/i.test(title)) {
     return true
   }
+  if (BAD_GROWTH_TITLE.test(title)) return true
   const text = `${title}\n${description}`
   if (SALES_FUNNEL.test(text)) return true
   if (/\bbusiness development\b/i.test(title)) {
@@ -177,9 +208,9 @@ function notFullTime(title: string, description: string, employmentType?: string
 }
 
 function pureAdmin(description: string): boolean {
-  const admin = /\b(calendar management|scheduling meetings|status reports?)\b/i.test(description)
-  const product = /\b(product|strategy|roadmap|user research|what to build)\b/i.test(description)
-  return admin && !product
+  const admin = BAD_OPS.test(description)
+  const substance = /\b(product|strategy|roadmap|user research|what to build|analytics|experiment|launch|ownership|cross-functional|decision)\b/i.test(description)
+  return admin && !substance
 }
 
 function partnershipDevelopment(title: string, description: string): boolean {
@@ -202,26 +233,37 @@ export function roleTier(family: string, title: string, description: string): Ro
   if (family === "User research" || family === "Insights" || family === "Product design") return 1
   if (family === "Founder's office") {
     if (pureAdmin(description)) return 0
-    if (/\b(product|strategy|roadmap|user|research|launch|what to build)\b/i.test(description)) return 1
+    if (FOUNDER_SIGNAL.test(text)) return 1
     return 2
   }
   if (family === "Strategy & operations") {
-    if (/\b(product|cross-functional|strategy|experiment|user|research)\b/i.test(text)) return 1
-    return 3
+    const bodyGood = GOOD_OPS_BODY.test(description)
+    const bodyBad = BAD_OPS.test(description)
+    if (bodyBad && !bodyGood) return 0
+    if (bodyGood || (GOOD_OPS_TITLE.test(title) && !bodyBad)) return 1
+    return 2
   }
-  if (family === "Innovation" || family === "Design engineering" || family === "Special projects") return 2
+  if (family === "Innovation" || family === "Special projects") return 1
+  if (family === "Design engineering") return 2
   if (family === "Growth") {
-    return /\b(experiment|user research|activation|retention|product team|product strategy)\b/i.test(description) ? 2 : 3
+    if (GOOD_GROWTH_TITLE.test(title) || GOOD_GROWTH_BODY.test(description)) return 1
+    return 2
   }
   if (family === "Customer experience") {
-    return /\b(user research|experiment|voice of customer|product team|product issue|product feedback)\b/i.test(description) ? 2 : 3
+    return CX_SIGNAL.test(description) ? 1 : 3
   }
   if (family === "Consulting") {
-    const digital = /\b(digital|product|\bux\b|user experience|technology|innovation)\b/i.test(text)
-    return digital ? 2 : 0
+    const digital = /\b(digital|product|\bux\b|user experience|technology|innovation|tech)\b/i.test(text)
+    return digital ? 1 : 0
   }
   if (family === "Marketing" || family === "Learning design") return 0
-  if (family === "Program" || family === "Community" || family === "Implementation") return 3
+  if (family === "Program") {
+    if (pureAdmin(description)) return 0
+    if (PROGRAM_SIGNAL.test(text)) return 1
+    return 3
+  }
+  if (family === "Community") return COMMUNITY_SIGNAL.test(text) ? 1 : 3
+  if (family === "Implementation") return 3
   return 0
 }
 

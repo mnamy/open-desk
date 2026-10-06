@@ -4,13 +4,26 @@ import { plainText } from "@/lib/jobs/text"
 import { arrangementLabel } from "@/lib/jobs/work-arrangement"
 
 export const FIT_WEIGHTS = {
-  role: 0.32,
-  level: 0.18,
-  product: 0.18,
-  ownership: 0.12,
-  startup: 0.12,
+  role: 0.3,
+  level: 0.16,
+  shape: 0.32,
+  product: 0.06,
+  startup: 0.08,
   industry: 0.08,
 } as const
+
+const WORK_DIMENSIONS: RegExp[] = [
+  /\b(end to end|0\s*(?:→|to)\s*1|zero to one|ownership|own(?:s|ing)? (?:the|a|this))\b/i,
+  /\b(cross-functional|partner with|product team|collaborat|stakeholder)\b/i,
+  /\b(problem|solve|diagnos|figure out|investigate|process improvement)\b/i,
+  /\b(strateg|roadmap|operating plan|what to build|initiative)\b/i,
+  /\b(experiment(?:s|ation|ing)?|a\/b|hypothesis|test and learn)\b/i,
+  /\b(users?|customers?|shoppers?|interview|talk to|engagement|activation|retention)\b/i,
+  /\b(analytics|cohorts?|metrics?|dashboards?|\bdata\b|\bkpis?\b)\b/i,
+  /\b(launch(?:es|ing)?|ship(?:ping)?|rollout|roll out|scal(?:e|ing))\b/i,
+  /\b(0\s*(?:→|to)\s*1|zero to one|ambiguous|from scratch|first version|greenfield|new ventures?)\b/i,
+  /\b(decisions?|decide|recommend|founders?|prioriti[sz])\b/i,
+]
 
 const INDUSTRY_BOOSTS: { re: RegExp; label: string }[] = [
   { re: /music/i, label: "Music technology" },
@@ -34,7 +47,7 @@ function clamp(value: number): number {
 
 export function contentHash(input: Pick<ClassificationInput, "companyName" | "title" | "description">): string {
   return createHash("sha256")
-    .update(`relevance-v3\n${input.companyName}\n${input.title}\n${input.description}`)
+    .update(`relevance-v4\n${input.companyName}\n${input.title}\n${input.description}`)
     .digest("hex")
 }
 
@@ -73,18 +86,17 @@ function levelScore(signal: ClassificationInput["levelSignal"]): number {
   return 40
 }
 
-function productScore(text: string): number {
-  if (/\b(user research|ux research|prototype|prototyp|product requirement|what to build|roadmap|experiment|product strategy|interaction design|user experience)\b/i.test(text)) {
-    return 92
-  }
-  if (/\b(product|feature|design|research|insight)\b/i.test(text)) return 68
-  return 28
+function workShape(text: string): number {
+  const hits = WORK_DIMENSIONS.reduce((count, pattern) => count + (pattern.test(text) ? 1 : 0), 0)
+  return clamp(40 + hits * 6.5)
 }
 
-function ownershipScore(text: string): number {
-  if (/\b(end to end|0 to 1|0→1|zero to one|cross-functional|own (?:this|a slice|the))\b/i.test(text)) return 90
-  if (/\b(product team|partner with)\b/i.test(text)) return 70
-  return 38
+function productExposure(text: string): number {
+  if (/\b(user research|ux research|prototype|prototyp|product requirement|what to build|roadmap|product strategy|interaction design|user experience)\b/i.test(text)) {
+    return 80
+  }
+  if (/\b(product|feature|design|research|insight)\b/i.test(text)) return 55
+  return 35
 }
 
 export function classifyDeterministic(input: ClassificationInput): Classification {
@@ -95,18 +107,18 @@ export function classifyDeterministic(input: ClassificationInput): Classificatio
   const industryLabel = industryMatch(input)
   const industry = industryLabel ? 90 : 42
   const startup = /early-stage|early stage|\bseed\b|series a|small team|startup|founding/i.test(text) ? 86 : 46
-  const product = productScore(text)
-  const ownership = ownershipScore(text)
+  const shape = workShape(text)
+  const product = productExposure(text)
 
   let opportunityFit = clamp(
     FIT_WEIGHTS.role * roleScore(input.roleTier) +
       FIT_WEIGHTS.level * levelScore(input.levelSignal) +
+      FIT_WEIGHTS.shape * shape +
       FIT_WEIGHTS.product * product +
-      FIT_WEIGHTS.ownership * ownership +
       FIT_WEIGHTS.industry * industry +
       FIT_WEIGHTS.startup * startup,
   )
-  if (input.roleTier === 3 && product < 90) opportunityFit = Math.min(opportunityFit, 72)
+  if (input.roleTier === 3 && shape < 75) opportunityFit = Math.min(opportunityFit, 72)
   if (input.roleTier === 0 || sales || seniorTitle) opportunityFit = Math.min(opportunityFit, 24)
   if (/\b(accountant|attorney|recruiter|registered nurse|supply chain|merchandis)/i.test(input.title)) {
     opportunityFit = Math.min(opportunityFit, 20)
