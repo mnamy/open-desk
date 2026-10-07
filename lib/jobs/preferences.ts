@@ -2,6 +2,8 @@ import { titleIsSenior } from "@/lib/jobs/eligibility"
 import { inferRoleFamily } from "@/lib/jobs/role-family"
 import { LEGACY_REASON } from "@/lib/jobs/reasons"
 import { normalizeCompanyName, plainText } from "@/lib/jobs/text"
+import { noteAdditions } from "@/lib/llm/notes"
+import type { FeedbackInterpretation } from "@/lib/llm/schema"
 
 /** One feature can move a role by at most this many fit points. */
 export const FEATURE_CAP = 4
@@ -154,6 +156,46 @@ const EXPOSURES: ExposureDef[] = [
     mild: /\bownership\b|\bfounding\b/i,
   },
   {
+    id: "decision",
+    label: "Decision-making",
+    up: "decision-making roles",
+    down: "decision-making responsibilities",
+    strong: /decision-making|decision making|you decide|autonomy/i,
+    mild: /\bdecide\b|\bdecisions\b/i,
+  },
+  {
+    id: "experiment",
+    label: "Experimentation",
+    up: "experimentation roles",
+    down: "experimentation responsibilities",
+    strong: /experiment(?:s|ation|ing)?|a\/b test|hypothesis/i,
+    mild: /\bexperiment\b/i,
+  },
+  {
+    id: "cross-functional",
+    label: "Cross-functional work",
+    up: "cross-functional roles",
+    down: "cross-functional responsibilities",
+    strong: /cross-functional|cross functional/i,
+    mild: /partner with|stakeholders/i,
+  },
+  {
+    id: "growth",
+    label: "Growth work",
+    up: "growth roles",
+    down: "growth responsibilities",
+    strong: /growth strategy|growth operations|product growth|lifecycle/i,
+    mild: /\bgrowth\b/i,
+  },
+  {
+    id: "admin",
+    label: "Administrative execution",
+    up: "administrative roles",
+    down: "administrative execution",
+    strong: /calendar management|scheduling meetings|expense reports|data entry|status reports|administrative|processes other people designed/i,
+    mild: /\bscheduling\b/i,
+  },
+  {
     id: "customer",
     label: "Customer-facing work",
     up: "customer-facing roles",
@@ -188,6 +230,7 @@ export interface LearningEvent {
   action: string
   createdAt: Date
   reasons: string[]
+  noteSignals?: FeedbackInterpretation | null
 }
 
 export interface SignalFeature {
@@ -205,7 +248,7 @@ interface Addition {
   label: string
   upPhrase: string
   downPhrase: string
-  source: "applied" | "saved" | "rejected"
+  source: "applied" | "saved" | "rejected" | "noted"
 }
 
 interface Bucket {
@@ -217,6 +260,7 @@ interface Bucket {
   applied: number
   saved: number
   rejected: number
+  noted: number
 }
 
 export interface PreferenceProfile {
@@ -502,10 +546,11 @@ function rejectionAdditions(features: SignalFeature[], reasons: string[]): Addit
 
 function additionsFor(job: FeatureInput, event: LearningEvent): Addition[] {
   const features = extractFeatures(job)
-  if (event.action === "applied") return positiveAdditions(features, "applied")
-  if (event.action === "save") return positiveAdditions(features, "saved")
-  if (event.action === "not_interested") return rejectionAdditions(features, event.reasons)
-  return []
+  const notes = event.noteSignals ? noteAdditions(event.noteSignals) : []
+  if (event.action === "applied") return [...positiveAdditions(features, "applied"), ...notes]
+  if (event.action === "save") return [...positiveAdditions(features, "saved"), ...notes]
+  if (event.action === "not_interested") return [...rejectionAdditions(features, event.reasons), ...notes]
+  return notes
 }
 
 export function buildProfile(jobs: FeatureInput[], events: LearningEvent[], resetAt: Date | null = null): PreferenceProfile {
@@ -526,6 +571,7 @@ export function buildProfile(jobs: FeatureInput[], events: LearningEvent[], rese
         applied: 0,
         saved: 0,
         rejected: 0,
+        noted: 0,
       }
       current.weight += addition.amount
       current[addition.source] += Math.abs(addition.amount)
@@ -574,8 +620,14 @@ export function adjustRanking(job: FeatureInput, profile: PreferenceProfile, bas
   let note: string | null = null
   if (strongest && Math.abs(delta) >= NOTE_THRESHOLD) {
     if (strongest.contribution > 0) {
-      const verb = strongest.bucket.applied >= strongest.bucket.saved ? "applied to" : "saved"
-      note = `Ranked higher because you've ${verb} similar ${strongest.bucket.upPhrase}.`
+      if (strongest.bucket.noted > strongest.bucket.applied && strongest.bucket.noted > strongest.bucket.saved) {
+        note = `Ranked higher because your notes favor ${strongest.bucket.upPhrase}.`
+      } else {
+        const verb = strongest.bucket.applied >= strongest.bucket.saved ? "applied to" : "saved"
+        note = `Ranked higher because you've ${verb} similar ${strongest.bucket.upPhrase}.`
+      }
+    } else if (strongest.bucket.noted > strongest.bucket.rejected) {
+      note = `Ranked lower because your notes move away from ${strongest.bucket.downPhrase}.`
     } else {
       note = `Ranked lower because you often reject ${strongest.bucket.downPhrase}.`
     }

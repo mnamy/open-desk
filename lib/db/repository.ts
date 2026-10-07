@@ -5,6 +5,17 @@ import { createClassifier } from "@/lib/llm/classifier"
 import type { Classification, QualificationRisk } from "@/lib/llm/types"
 import { processPostings } from "@/lib/jobs/pipeline"
 import { validRejectionReasons } from "@/lib/jobs/reasons"
+import {
+  LOCAL_MODEL_ID,
+  feedbackSignalsJson,
+  interpretationHash,
+  interpretationSource,
+  jobSignalsJson,
+  parseFeedbackInterpretation,
+  parseJobFeatures,
+  type FeedbackInterpretation,
+  type JobFeatures,
+} from "@/lib/llm/schema"
 import { normalizeCompanyName } from "@/lib/jobs/text"
 import type { RawPosting } from "@/lib/sources/types"
 import { asSql, type Sql } from "@/lib/db/sql"
@@ -36,6 +47,7 @@ export interface FeedbackRecord {
   createdAt: Date
   note: string | null
   reasons: string[]
+  noteSignals: FeedbackInterpretation | null
 }
 
 export interface DeskSource {
@@ -72,6 +84,9 @@ export interface DeskJob {
   origin: string
   preferenceDelta: number
   preferenceNote: string | null
+  semanticFeatures: JobFeatures | null
+  interpretationHash: string | null
+  semanticDelta: number
 }
 
 export interface SearchRun {
@@ -506,7 +521,11 @@ export async function listDeskJobs(input: Database): Promise<DeskJob[]> {
     origin: row.origin ?? "search",
     preferenceDelta: 0,
     preferenceNote: null,
+    semanticFeatures: null,
+    interpretationHash: null,
+    semanticDelta: 0,
   }))
+  await attachInterpretations(db, mapped)
   const liveExists = mapped.some((job) => !job.sample)
   if (!liveExists) return mapped
   return mapped.filter((job) => !job.sample || job.actions.includes("save") || job.actions.includes("applied"))
@@ -756,6 +775,80 @@ function logSourceWarnings(warnings: string[]) {
   console.warn(`Open Desk source warnings (${warnings.length})\n${warnings.join("\n")}`)
 }
 
+async function attachInterpretations(db: Sql, jobs: DeskJob[]): Promise<void> {
+  if (jobs.length === 0) return
+  const readings = await db.query<{ subject_id: string; content_hash: string; signals: string }>(
+    "SELECT subject_id, content_hash, signals FROM interpretations WHERE kind = 'job'",
+  )
+  const byJob = new Map(readings.rows.map((row) => [row.subject_id, row]))
+  for (const job of jobs) {
+    const reading = byJob.get(job.id)
+    if (!reading) continue
+    const hash = await interpretationHash("job", `${job.title}\n${job.description}`)
+    if (reading.content_hash !== hash) continue
+    job.interpretationHash = hash
+    job.semanticFeatures = parseJobFeatures(reading.signals)
+  }
+}
+
+export async function saveInterpretation(
+  input: Database,
+  detail: {
+    kind: "feedback" | "job"
+    jobId: string
+    rawText: string
+    signals: unknown
+    modelId: string
+    contentHash: string
+  },
+): Promise<"saved" | "ignored"> {
+  if (detail.modelId !== LOCAL_MODEL_ID) return "ignored"
+  if (detail.kind !== "feedback" && detail.kind !== "job") return "ignored"
+  const db = asSql(input)
+  const encoded = JSON.stringify(detail.signals ?? null)
+  if (detail.kind === "feedback") {
+    const parsed = parseFeedbackInterpretation(encoded)
+    if (!parsed) return "ignored"
+    const feedback = await db.query<{ id: string; note: string | null }>(
+      "SELECT id, note FROM feedback WHERE job_id = $1 AND action = 'not_interested'",
+      [detail.jobId],
+    )
+    const row = feedback.rows[0]
+    if (!row?.note) return "ignored"
+    const source = interpretationSource("feedback", row.note)
+    const hash = await interpretationHash("feedback", source)
+    if (hash !== detail.contentHash || source !== interpretationSource("feedback", detail.rawText)) return "ignored"
+    await db.query(
+      `INSERT INTO interpretations (id, kind, subject_id, content_hash, raw_text, signals, model_id, parsed_at)
+       VALUES ($1, 'feedback', $2, $3, $4, $5, $6, NOW())
+       ON CONFLICT (kind, subject_id, content_hash)
+       DO UPDATE SET signals = EXCLUDED.signals, raw_text = EXCLUDED.raw_text, model_id = EXCLUDED.model_id, parsed_at = NOW()`,
+      [randomUUID(), row.id, hash, source, feedbackSignalsJson(parsed), LOCAL_MODEL_ID],
+    )
+    return "saved"
+  }
+
+  const parsed = parseJobFeatures(encoded)
+  if (!parsed) return "ignored"
+  const job = await db.query<{ title: string; description: string | null; feed_bucket: string }>(
+    "SELECT title, description, feed_bucket FROM jobs WHERE id = $1",
+    [detail.jobId],
+  )
+  const row = job.rows[0]
+  if (!row || row.feed_bucket === "excluded") return "ignored"
+  const source = interpretationSource("job", `${row.title}\n${row.description ?? ""}`)
+  const hash = await interpretationHash("job", source)
+  if (hash !== detail.contentHash) return "ignored"
+  await db.query(
+    `INSERT INTO interpretations (id, kind, subject_id, content_hash, raw_text, signals, model_id, parsed_at)
+     VALUES ($1, 'job', $2, $3, $4, $5, $6, NOW())
+     ON CONFLICT (kind, subject_id, content_hash)
+     DO UPDATE SET signals = EXCLUDED.signals, raw_text = EXCLUDED.raw_text, model_id = EXCLUDED.model_id, parsed_at = NOW()`,
+    [randomUUID(), detail.jobId, hash, source, jobSignalsJson(parsed), LOCAL_MODEL_ID],
+  )
+  return "saved"
+}
+
 export async function setFeedback(
   input: Database,
   jobId: string,
@@ -811,34 +904,58 @@ export async function setFeedback(
 export async function listFeedback(input: Database): Promise<FeedbackRecord[]> {
   const db = asSql(input)
   const result = await db.query<{
+    id: string
     job_id: string
     action: string
     created_at: Date | string
     note: string | null
     reason: string | null
   }>(
-    `SELECT f.job_id, f.action, f.created_at, f.note, r.reason
+    `SELECT f.id, f.job_id, f.action, f.created_at, f.note, r.reason
      FROM feedback f
      LEFT JOIN feedback_reasons r ON r.feedback_id = f.id
      ORDER BY f.created_at ASC`,
   )
-  const grouped = new Map<string, FeedbackRecord>()
+  const readings = await db.query<{ subject_id: string; content_hash: string; signals: string }>(
+    "SELECT subject_id, content_hash, signals FROM interpretations WHERE kind = 'feedback'",
+  )
+  const byFeedback = new Map(readings.rows.map((row) => [row.subject_id, row]))
+  const grouped = new Map<string, FeedbackRecord & { feedbackId: string }>()
   for (const row of result.rows) {
     const key = `${row.job_id}:${row.action}`
     const existing = grouped.get(key)
     if (!existing) {
       grouped.set(key, {
+        feedbackId: row.id,
         jobId: row.job_id,
         action: row.action,
         createdAt: asDate(row.created_at) ?? new Date(),
         note: row.note,
         reasons: row.reason ? [row.reason] : [],
+        noteSignals: null,
       })
     } else if (row.reason && !existing.reasons.includes(row.reason)) {
       existing.reasons.push(row.reason)
     }
   }
-  return [...grouped.values()]
+  const records: FeedbackRecord[] = []
+  for (const record of grouped.values()) {
+    const reading = byFeedback.get(record.feedbackId)
+    let noteSignals: FeedbackInterpretation | null = null
+    if (reading && record.note) {
+      const hash = await interpretationHash("feedback", record.note)
+      if (reading.content_hash === hash) noteSignals = parseFeedbackInterpretation(reading.signals)
+    }
+    records.push({
+      jobId: record.jobId,
+      action: record.action,
+      createdAt: record.createdAt,
+      note: record.note,
+      reasons: record.reasons,
+      noteSignals,
+    })
+  }
+  return records
 }
 
 export async function preferenceResetAt(input: Database): Promise<Date | null> {
