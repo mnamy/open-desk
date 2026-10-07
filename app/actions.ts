@@ -5,6 +5,7 @@ import { getDb } from "@/lib/db/client"
 import {
   importExternalJob,
   resetLearnedPreferences,
+  saveInterpretation,
   setFeedback,
   type FeedbackAction,
 } from "@/lib/db/repository"
@@ -20,6 +21,20 @@ export async function feedbackAction(
   if (!/^[0-9a-f-]{36}$/i.test(jobId)) return
   const db = await getDb()
   await setFeedback(db, jobId, action, detail)
+  revalidatePath("/")
+}
+
+export async function saveInterpretationAction(input: {
+  kind: "feedback" | "job"
+  jobId: string
+  rawText: string
+  signals: unknown
+  modelId: string
+  contentHash: string
+}): Promise<void> {
+  if (!/^[0-9a-f-]{36}$/i.test(input.jobId)) return
+  const db = await getDb()
+  await saveInterpretation(db, input)
   revalidatePath("/")
 }
 

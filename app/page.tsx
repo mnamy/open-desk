@@ -5,6 +5,7 @@ import { Filters } from "@/components/filters"
 import { JobCard } from "@/components/job-card"
 import { AddJobButton } from "@/components/add-job"
 import { LearnedPreferences } from "@/components/learned-preferences"
+import { LocalAi, LocalAiStatus } from "@/components/local-ai"
 import { RunSearchButton } from "@/components/run-search"
 import { buttonVariants } from "@/components/ui/button"
 import { getDb } from "@/lib/db/client"
@@ -22,6 +23,7 @@ import {
   visibleJobs,
   type DeskFilters,
 } from "@/lib/jobs/view"
+import { jobsForLocalInterpretation } from "@/lib/llm/select"
 import { summarizeWarnings } from "@/lib/sources/warnings"
 
 export const dynamic = "force-dynamic"
@@ -117,12 +119,19 @@ export default async function Home({
   const now = new Date()
   const counts = countFeeds(jobs)
   const shown = visibleJobs(jobs, feed, filters, now)
+  const localJobs = jobsForLocalInterpretation(shown).map((job) => ({
+    id: job.id,
+    title: job.title,
+    description: job.description,
+    interpretationHash: job.interpretationHash,
+  }))
   const options = filterOptions(jobs)
   const filtered = hasActiveFilters(filters)
   const empty = emptyCopy(feed, filtered)
   const label = FEEDS.find((item) => item.id === feed)?.label ?? "Top picks"
 
   return (
+    <LocalAi jobs={localJobs}>
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:py-10">
       <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
         <div className="max-w-xl">
@@ -141,6 +150,7 @@ export default async function Home({
       </header>
 
       <p className="text-sm leading-6 text-muted-foreground">{runSummary(run)}</p>
+      <LocalAiStatus />
       {run && run.warnings.length > 0 ? <SourceWarnings warnings={run.warnings} /> : null}
 
       <FeedNav feed={feed} counts={counts} query={query.toString()} />
@@ -174,5 +184,6 @@ export default async function Home({
         </div>
       )}
     </main>
+    </LocalAi>
   )
 }

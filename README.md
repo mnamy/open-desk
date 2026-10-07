@@ -6,6 +6,8 @@ A role reaches the main feed only if it is in one of those cities, is on-site or
 
 Each role has two scores. Opportunity fit (0–100) scores ownership, cross-functional work, strategy, experimentation, user exposure, and proximity to decisions. Product exposure helps, and it is one part of the score. Qualification risk (low, medium, high) is how much of a stretch applying would be. Risk never replaces fit.
 
+When the browser supports WebGPU, Open Desk can load Llama 3.2 1B Instruct locally with WebLLM. The model interprets optional rejection notes and a few ambiguous descriptions. It does not rank or reject roles, and the note is not sent to an AI API. Browsers without WebGPU keep the deterministic parser. The first download is about 705 MB of model weights plus a small WebGPU library, then the browser cache keeps it.
+
 ## Run locally
 
 Requires Node.js 22 or newer. Leave the Neon variables unset to use embedded PGlite. No API keys.

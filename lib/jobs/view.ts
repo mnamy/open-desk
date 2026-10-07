@@ -1,6 +1,7 @@
 import type { DeskJob, FeedbackRecord, SearchRun } from "@/lib/db/repository"
 import { orderWithDiversity } from "@/lib/jobs/diversity"
 import { FEEDS, jobInFeed, type FeedId } from "@/lib/jobs/feeds"
+import { semanticDelta } from "@/lib/llm/rank"
 import { adjustRanking, buildProfile, summarizeProfile, type PreferenceSummary } from "@/lib/jobs/preferences"
 import { formatDeskTime, freshness, matchesPostedFilter } from "@/lib/jobs/freshness"
 import { sourceLabel } from "@/lib/jobs/role-family"
@@ -76,7 +77,7 @@ export function filterOptions(jobs: DeskJob[]): FilterOptions {
 }
 
 function rankScore(job: DeskJob): number {
-  return (job.opportunityFit ?? 0) + (job.preferenceDelta ?? 0)
+  return (job.opportunityFit ?? 0) + (job.preferenceDelta ?? 0) + (job.semanticDelta ?? 0)
 }
 
 export function annotatePreferences(
@@ -100,6 +101,7 @@ export function annotatePreferences(
       action: item.action,
       createdAt: item.createdAt,
       reasons: item.reasons,
+      noteSignals: item.noteSignals,
     })),
     resetAt,
   )
@@ -120,7 +122,12 @@ export function annotatePreferences(
         profile,
         job.opportunityFit ?? 0,
       )
-      return { ...job, preferenceDelta: adjustment.delta, preferenceNote: adjustment.note }
+      return {
+        ...job,
+        preferenceDelta: adjustment.delta,
+        preferenceNote: adjustment.note,
+        semanticDelta: semanticDelta(job.semanticFeatures, job.feedBucket),
+      }
     }),
   }
 }
