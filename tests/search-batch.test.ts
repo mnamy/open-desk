@@ -63,4 +63,49 @@ describe("batched live search", () => {
     expect(runSummary(run)).toContain("Checked 2 companies")
     await db.close()
   })
+
+  it("saves a large board across passes and keeps a null byte from aborting the write", async () => {
+    const db = new PGlite()
+    await applyMigration(db)
+    const jobs = Array.from({ length: 45 }, (_, index) => ({
+      id: index + 1,
+      title: `Operator ${index}`,
+      absolute_url: `https://boards.greenhouse.io/bigco/jobs/${index + 1}`,
+      location: { name: "Chicago, IL" },
+      content: index === 0 ? "Chicago hybrid role. 0-1 years.\u0000 Own the operating plan." : "Chicago hybrid role. 0-1 years.",
+    }))
+    const client: HttpClient = {
+      async getJson(url) {
+        if (url.includes("/bigco/")) return { jobs }
+        throw new Error("timed out")
+      },
+      async getText() {
+        throw new Error("timed out")
+      },
+    }
+    const companies = [{ name: "Big Co", atsProvider: "greenhouse" as const, atsIdentifier: "bigco", website: "https://big.example" }]
+
+    const first = await continueLiveSearch(db, { now, client, fetchYc: false, fetchMarketplaces: false, companies })
+    expect(first.done).toBe(false)
+    expect(first.progress).toContain("fetched 40 postings")
+
+    let steps = 0
+    let last = first
+    do {
+      last = await continueLiveSearch(db, { now, client, fetchYc: false, fetchMarketplaces: false, companies })
+      steps += 1
+    } while (!last.done && steps < 8)
+
+    expect(last.done).toBe(true)
+    const stored = await db.query<{ count: string; description: string }>(
+      "SELECT COUNT(*)::text AS count, MIN(description) AS description FROM jobs",
+    )
+    expect(stored.rows[0].count).toBe("45")
+    const poisoned = await db.query<{ description: string }>(
+      "SELECT description FROM jobs WHERE source_url = 'https://boards.greenhouse.io/bigco/jobs/1'",
+    )
+    expect(poisoned.rows[0].description.includes("\u0000")).toBe(false)
+    expect(poisoned.rows[0].description).toContain("operating plan")
+    await db.close()
+  })
 })
