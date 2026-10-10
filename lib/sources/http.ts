@@ -40,7 +40,11 @@ export function createHttpClient(options?: {
     }
     const body = await response.text()
     if (cache && body.length > 0 && body.length <= 1_500_000) {
-      await cache.set(url, body)
+      try {
+        await cache.set(url, body.replace(/\u0000/g, ""))
+      } catch {
+        // A cache miss next time is better than dropping a live board.
+      }
     }
     return body
   }

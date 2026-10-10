@@ -14,15 +14,49 @@ type Queryable = {
   exec: (text: string) => Promise<unknown>
 }
 
+const marked = new WeakSet<object>()
+
+function mark(sql: Sql): Sql {
+  marked.add(sql)
+  return sql
+}
+
 export function asSql(db: Sql | Queryable | PGlite): Sql {
-  if ("transaction" in db && typeof (db as Sql).transaction === "function") return db as Sql
-  return wrapPglite(db as PGlite)
+  if (typeof db === "object" && db && marked.has(db)) return db as Sql
+  if ("transaction" in db && typeof db.transaction === "function") return mark(wrapNative(db as PGlite))
+  return mark(wrapPglite(db as PGlite))
+}
+
+function wrapNative(db: PGlite): Sql {
+  return {
+    query(text, params) {
+      return db.query(text, sqlParams(params) as never[])
+    },
+    async exec(text) {
+      await db.exec(text)
+    },
+    transaction(fn) {
+      return db.transaction((tx) => fn(wrapNative(tx as unknown as PGlite)))
+    },
+  }
+}
+
+/** Postgres rejects NUL bytes, lone surrogates, and undefined parameters. */
+export function sqlParams(params: unknown[] = []): unknown[] {
+  return params.map(sqlParam)
+}
+
+function sqlParam(value: unknown): unknown {
+  if (value === undefined) return null
+  if (typeof value === "string") return value.replace(/\u0000/g, "").replace(/[\uD800-\uDFFF]/g, "")
+  if (Array.isArray(value)) return value.map(sqlParam)
+  return value
 }
 
 export function wrapPglite(db: PGlite): Sql {
   const sql: Sql = {
     query(text, params) {
-      return db.query(text, params as never[])
+      return db.query(text, sqlParams(params) as never[])
     },
     async exec(text) {
       await db.exec(text)
@@ -39,7 +73,7 @@ export function wrapPglite(db: PGlite): Sql {
       }
     },
   }
-  return sql
+  return mark(sql)
 }
 
 type PostgresClient = ReturnType<typeof postgres>
@@ -58,9 +92,9 @@ export function openPostgres(url: string): { db: Sql; close: () => Promise<void>
 }
 
 function bindPostgres(client: PostgresClient | PostgresTx): Sql {
-  return {
+  return mark({
     async query<T>(text: string, params: unknown[] = []) {
-      const rows = await client.unsafe(text, params as never[])
+      const rows = await client.unsafe(text, sqlParams(params) as never[])
       return { rows: [...rows] as T[] }
     },
     async exec(text) {
@@ -71,5 +105,5 @@ function bindPostgres(client: PostgresClient | PostgresTx): Sql {
       const result = await client.begin(async (tx) => fn(bindPostgres(tx)))
       return result as Awaited<ReturnType<typeof fn>>
     },
-  }
+  })
 }

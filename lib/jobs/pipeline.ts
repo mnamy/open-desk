@@ -86,10 +86,15 @@ function boardFrom(raw: RawPosting): { provider: string | null; identifier: stri
   }
 }
 
+function yearCount(value: number | null): number | null {
+  if (value == null || !Number.isFinite(value)) return null
+  return Math.max(0, Math.min(60, Math.trunc(value)))
+}
+
 function postedAtFrom(daysAgo: number | null, now: Date): Date | null {
-  if (daysAgo === null || daysAgo === undefined) return null
+  if (daysAgo === null || daysAgo === undefined || !Number.isFinite(daysAgo)) return null
   const posted = new Date(now.getTime() - daysAgo * 86_400_000)
-  return posted
+  return Number.isNaN(posted.getTime()) ? null : posted
 }
 
 function blankFrom(raw: RawPosting): {
@@ -232,8 +237,8 @@ export async function processPostings(
       locationRaw: raw.locationRaw,
       normalizedCity: evaluation.city,
       workArrangement: evaluation.workArrangement,
-      experienceMin: evaluation.experience.experienceMin,
-      experienceMax: evaluation.experience.experienceMax,
+      experienceMin: yearCount(evaluation.experience.experienceMin),
+      experienceMax: yearCount(evaluation.experience.experienceMax),
       experienceRequiredOrPreferred: evaluation.experience.requiredOrPreferred,
       experienceLabel: evaluation.experience.label,
       employmentType: merged.employmentType,

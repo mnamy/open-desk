@@ -14,9 +14,10 @@ export async function POST() {
     return Response.json(step)
   } catch (error) {
     const message = error instanceof Error ? error.message : "search step failed"
-    console.error(message.replace(/postgres(?:ql)?:\/\/\S+/gi, "postgres://[redacted]"))
+    const safe = message.replace(/postgres(?:ql)?:\/\/\S+/gi, "postgres://[redacted]").replace(/\s+/g, " ").slice(0, 160)
+    console.error(safe)
     return Response.json(
-      { done: false, progress: "This pass failed. Run search again to continue. Earlier passes are saved." },
+      { done: false, progress: `This pass failed (${safe}). Run search again to continue. Earlier passes are saved.` },
       { status: 500 },
     )
   }

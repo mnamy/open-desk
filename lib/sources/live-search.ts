@@ -385,17 +385,17 @@ export interface SearchCursor {
   seenBoards: string[]
   wellfoundIndex?: number
   welcomePage?: number
+  /** Jobs already taken from the current board, Wellfound page, or Welcome page. */
+  postingOffset?: number
   disabledBoards?: string[]
   healthyCompanies?: string[]
 }
 
 const SLICE_BOARD_TIMEOUT_MS = 12_000
-const SLICE_MAX_BOARDS = 3
-const SLICE_MAX_POSTINGS = 100
-const SLICE_BUDGET_MS = 18_000
+/** One serverless pass must stay small enough to fetch and save before the platform stops it. */
+const SLICE_MAX_POSTINGS = 40
 const SLICE_YC_DETAILS = 8
-const SLICE_DISCOVERY = 3
-const SLICE_WELLFOUND = 8
+const SLICE_DISCOVERY = 1
 
 export function initialCursor(companies: SeedCompany[], disabledBoards: string[] = []): SearchCursor {
   return {
@@ -409,6 +409,7 @@ export function initialCursor(companies: SeedCompany[], disabledBoards: string[]
     seenBoards: [],
     wellfoundIndex: 0,
     welcomePage: 0,
+    postingOffset: 0,
     disabledBoards,
     healthyCompanies: [],
   }
@@ -447,8 +448,10 @@ function skipEmpty(cursor: SearchCursor): SearchCursor {
     seenBoards: [...cursor.seenBoards],
     wellfoundIndex: cursor.wellfoundIndex ?? 0,
     welcomePage: cursor.welcomePage ?? 0,
+    postingOffset: cursor.postingOffset ?? 0,
   }
   while (true) {
+    const phase = next.phase
     if (next.phase === "boards" && next.boardIndex >= boardTargets(next).length) next.phase = "yc-search"
     else if (next.phase === "yc-details" && next.ycIndex >= next.ycIds.length) next.phase = "discover"
     else if (next.phase === "discover" && next.discoveryIndex >= discoveryTargets(next).length) next.phase = "followup"
@@ -456,8 +459,15 @@ function skipEmpty(cursor: SearchCursor): SearchCursor {
     else if (next.phase === "wellfound" && next.wellfoundIndex >= wellfoundSearchUrls().length) next.phase = "welcome"
     else if (next.phase === "welcome" && next.welcomePage >= WELCOME_MAX_PAGES) next.phase = "done"
     else break
+    if (next.phase !== phase) next.postingOffset = 0
   }
   return next
+}
+
+function pageOf(postings: RawPosting[], offset: number): { postings: RawPosting[]; nextOffset: number | null } {
+  const slice = postings.slice(offset, offset + SLICE_MAX_POSTINGS)
+  const next = offset + slice.length
+  return { postings: slice, nextOffset: next < postings.length ? next : null }
 }
 
 export async function collectNextSlice(options: {
@@ -485,32 +495,44 @@ function skipMarket(cursor: SearchCursor, phase: SearchCursor["phase"]) {
 
 async function collectBoardSlice(cursor: SearchCursor, client: HttpClient, now: Date) {
   const boards = boardTargets(cursor)
-  const started = Date.now()
-  const postings: RawPosting[] = []
+  const index = cursor.boardIndex
+  const company = boards[index]
+  const seen = new Set(cursor.seenBoards)
+  const offset = cursor.postingOffset ?? 0
+  const key = company ? boardKey(company) : null
+  if (!company || (key && seen.has(key) && offset === 0)) {
+    return {
+      cursor: skipEmpty({ ...cursor, boardIndex: index + 1, postingOffset: 0 }),
+      collection: emptyCollection(),
+    }
+  }
   const warnings: string[] = []
   const checked: CheckedCompany[] = []
   const staleBoards: StaleBoard[] = []
-  const seen = new Set(cursor.seenBoards)
-  let index = cursor.boardIndex
-  while (index < boards.length && index - cursor.boardIndex < SLICE_MAX_BOARDS) {
-    if (index > cursor.boardIndex && (Date.now() - started > SLICE_BUDGET_MS || postings.length >= SLICE_MAX_POSTINGS)) break
-    const company = boards[index]
-    index += 1
-    const key = boardKey(company)
-    if (key && seen.has(key)) continue
+  let postings: RawPosting[] = []
+  try {
+    postings = await fetchBoard(company, client, now, SLICE_BOARD_TIMEOUT_MS)
+    if (offset === 0) checked.push(checkedFrom(company, company.atsProvider ?? "seed"))
+  } catch (error) {
+    const problem = boardProblem(company, error)
+    warnings.push(problem.warning)
+    if (problem.stale) staleBoards.push(problem.stale)
+    checked.push(checkedFrom(company, company.atsProvider ?? "seed", { sourceHealth: problem.health }))
     if (key) seen.add(key)
-    try {
-      postings.push(...(await fetchBoard(company, client, now, SLICE_BOARD_TIMEOUT_MS)))
-      checked.push(checkedFrom(company, company.atsProvider ?? "seed"))
-    } catch (error) {
-      const problem = boardProblem(company, error)
-      warnings.push(problem.warning)
-      if (problem.stale) staleBoards.push(problem.stale)
-      checked.push(checkedFrom(company, company.atsProvider ?? "seed", { sourceHealth: problem.health }))
+    return {
+      cursor: skipEmpty({ ...cursor, boardIndex: index + 1, postingOffset: 0, seenBoards: [...seen] }),
+      collection: collectionFrom([], warnings, checked, staleBoards),
     }
   }
-  const next = skipEmpty({ ...cursor, boardIndex: index, seenBoards: [...seen] })
-  return { cursor: next, collection: collectionFrom(postings, warnings, checked, staleBoards) }
+  const page = pageOf(postings, offset)
+  if (page.nextOffset === null && key) seen.add(key)
+  const next = skipEmpty({
+    ...cursor,
+    boardIndex: page.nextOffset === null ? index + 1 : index,
+    postingOffset: page.nextOffset ?? 0,
+    seenBoards: [...seen],
+  })
+  return { cursor: next, collection: collectionFrom(page.postings, warnings, checked, staleBoards) }
 }
 
 function skipYc(cursor: SearchCursor) {
@@ -617,10 +639,11 @@ async function collectFollowUp(cursor: SearchCursor, client: HttpClient, now: Da
   const checked: CheckedCompany[] = []
   const staleBoards: StaleBoard[] = []
   let postings: RawPosting[] = []
+  const offset = cursor.postingOffset ?? 0
   if (company) {
     try {
       postings = await fetchBoard(company, client, now, SLICE_BOARD_TIMEOUT_MS)
-      checked.push(checkedFrom(company, company.atsProvider ?? "career_page"))
+      if (offset === 0) checked.push(checkedFrom(company, company.atsProvider ?? "career_page"))
     } catch (error) {
       const problem = boardProblem(company, error)
       warnings.push(problem.warning)
@@ -632,30 +655,52 @@ async function collectFollowUp(cursor: SearchCursor, client: HttpClient, now: Da
           sourceHealth: problem.health,
         }),
       )
+      const next = skipEmpty({ ...cursor, followUps: rest, postingOffset: 0 })
+      return { cursor: next, collection: collectionFrom([], warnings, checked, staleBoards) }
     }
   }
-  const next = skipEmpty({ ...cursor, followUps: rest })
-  return { cursor: next, collection: collectionFrom(postings, warnings, checked, staleBoards) }
+  const page = pageOf(postings, offset)
+  const next = skipEmpty({
+    ...cursor,
+    followUps: page.nextOffset === null ? rest : cursor.followUps,
+    postingOffset: page.nextOffset ?? 0,
+  })
+  return { cursor: next, collection: collectionFrom(page.postings, warnings, checked, staleBoards) }
 }
 
 async function collectWellfoundSlice(cursor: SearchCursor, client: HttpClient, now: Date) {
   const urls = wellfoundSearchUrls()
   const start = cursor.wellfoundIndex ?? 0
-  const batch = urls.slice(start, start + SLICE_WELLFOUND)
-  const found = await fetchWellfound(client, now, batch)
+  const offset = cursor.postingOffset ?? 0
+  const url = urls[start]
+  if (!url) {
+    return { cursor: skipEmpty({ ...cursor, wellfoundIndex: urls.length, postingOffset: 0 }), collection: emptyCollection() }
+  }
+  const found = await fetchWellfound(client, now, [url])
+  const page = pageOf(found.postings, offset)
   const checked: CheckedCompany[] = []
-  rememberCompanies(found.postings, "wellfound", checked)
-  const next = skipEmpty({ ...cursor, wellfoundIndex: start + batch.length })
-  return { cursor: next, collection: collectionFrom(found.postings, found.warnings, checked) }
+  rememberCompanies(page.postings, "wellfound", checked)
+  const next = skipEmpty({
+    ...cursor,
+    wellfoundIndex: page.nextOffset === null ? start + 1 : start,
+    postingOffset: page.nextOffset ?? 0,
+  })
+  return { cursor: next, collection: collectionFrom(page.postings, offset === 0 ? found.warnings : [], checked) }
 }
 
 async function collectWelcomeSlice(cursor: SearchCursor, client: HttpClient, now: Date) {
-  const page = cursor.welcomePage ?? 0
-  const found = await fetchWelcome(client, now, 1, page)
+  const pageNumber = cursor.welcomePage ?? 0
+  const offset = cursor.postingOffset ?? 0
+  const found = await fetchWelcome(client, now, 1, pageNumber)
+  const page = pageOf(found.postings, offset)
   const checked: CheckedCompany[] = []
-  rememberCompanies(found.postings, "welcome_to_the_jungle", checked)
-  const next = skipEmpty({ ...cursor, welcomePage: page + 1 })
-  return { cursor: next, collection: collectionFrom(found.postings, found.warnings, checked) }
+  rememberCompanies(page.postings, "welcome_to_the_jungle", checked)
+  const next = skipEmpty({
+    ...cursor,
+    welcomePage: page.nextOffset === null ? pageNumber + 1 : pageNumber,
+    postingOffset: page.nextOffset ?? 0,
+  })
+  return { cursor: next, collection: collectionFrom(page.postings, offset === 0 ? found.warnings : [], checked) }
 }
 
 function collectionFrom(

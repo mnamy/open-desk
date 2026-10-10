@@ -13,7 +13,8 @@ function chunks<T>(items: T[], size: number): T[][] {
 }
 
 function stamp(date: Date | null): string | null {
-  return date ? date.toISOString() : null
+  if (!date || Number.isNaN(date.getTime())) return null
+  return date.toISOString()
 }
 
 function tuples(rows: unknown[][], casts: string[]): { sql: string; params: unknown[] } {
